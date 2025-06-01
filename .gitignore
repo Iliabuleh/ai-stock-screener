@@ -1,0 +1,82 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.env/
+.venv/
+env/
+
+# Environment variable / secret files
+*.env
+.env.*
+
+# pipenv / poetry
+Pipfile.lock
+poetry.lock
+
+# pytest
+.cache/
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+coverage.xml
+.coverage
+.coverage.*
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Pyright type checker
+pyrightconfig.json
+
+# Pylint
+pylint-report.txt
+pylint-output.txt
+
+# Bandit security linter
+bandit.json
+
+# Test result logs
+junit*.xml
+
+# VS Code
+.vscode/
+
+# JetBrains IDEs (PyCharm, IntelliJ)
+.idea/
+
+# macOS / Linux / Windows artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# SQLite DBs / test DBs
+*.sqlite3
+*.db
+*.log
+
+# Profiling data
+*.prof
+*.pstats
+*.dat
