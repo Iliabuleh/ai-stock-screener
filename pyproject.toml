@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "ai-stock-screener"
+version = "0.1.0"
+description = "AI-powered CLI tool that screens stocks using technical and fundamental indicators."
+authors = ["Ilia Buleh <ilia.buleh@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "ai_screener" }]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+pandas = "^2.2.2"
+yfinance = "^0.2.37"
+pandas-ta = "^0.3.14b0"
+scikit-learn = "^1.4.2"
+lxml = "^5.2.1"
+setuptools = "^69.2.0"
+numpy = "^1.26"
+typer = "^0.16.0"
+
+[tool.poetry.scripts]
+screener = "ai_screener.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
