@@ -51,10 +51,15 @@ poetry run screener --mode eval --tickers AAPL NVDA AMZN
 | `--future_days`  | Days ahead to calculate return and create label. Default: `5`.               |
 | `--threshold`    | Return threshold to label a day as `growth`. Default: `0.0`.                 |
 | `--n_estimators` | Number of trees in the Random Forest model. Default: `100`.                 |
+| `--no_integrate_market` | Disable market trend integration in predictions. Default: False.           |
 
 - **Mode Options**:
   - `discovery`: Scans entire S&P 500 for growth opportunities
   - `eval`: Analyzes specific tickers provided via `--tickers` parameter
+
+- **Market Integration**:
+  - By default, the model considers overall market trends in predictions
+  - Use `--no_integrate_market` to analyze stocks independently of market conditions
 
 - **Threshold Usage**:
   - `0.0`: Any positive return counts as growth.
