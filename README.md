@@ -58,3 +58,35 @@ poetry run screener --mode eval --tickers AAPL NVDA AMZN
   - A higher value generally improves accuracy.
   - More trees increase training time and memory usage.
   - Example: `--n_estimators 200` uses 200 decision trees.
+
+  
+  ### Discovery Mode Example
+  Scan the S&P 500 for stocks with strong growth potential using a 2-year lookback period and 30-day future prediction:
+  ```bash
+  poetry run screener --mode discovery \
+    --period 2y \
+    --threshold 0.07 \
+    --future_days 30 \
+    --n_estimators 1000
+  ```
+  This configuration:
+  - Uses 2 years of historical data
+  - Labels stocks as growth if they return >7% in 30 days
+  - Uses 1000 trees for higher model accuracy
+
+  ### Evaluation Mode Example
+  Analyze a specific list of tech and semiconductor stocks using a 1-year lookback:
+  ```bash
+  poetry run screener --mode eval \
+    --tickers NVDA,QCOM,AVGO,APP,TSLA,SPY,GOOGL,PLTR,HIMS,QQQ,MSTR,AAPL,XBI \
+    --period 1y \
+    --threshold 0.07 \
+    --future_days 30 \
+    --n_estimators 300
+  ```
+  This configuration:
+  - Evaluates 13 specific stocks
+  - Uses 1 year of historical data
+  - Labels stocks as growth if they return >7% in 30 days
+  - Uses 300 trees for balanced performance
+  

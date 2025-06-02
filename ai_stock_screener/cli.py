@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from ai_screener import get_sp500_tickers, run_screening
+from ai_stock_screener.ai_screener import get_sp500_tickers, run_screening
 
 def main():
     parser = argparse.ArgumentParser(description="AI-Powered Stock Screener CLI")
@@ -45,10 +45,6 @@ def main():
         run_screening(tickers, config)
 
 
-def cli_entry():
-    import sys
-    sys.argv[0] = "screener"  # Optional: makes help text look nicer
-    main()
 
 if __name__ == "__main__":
     main()
