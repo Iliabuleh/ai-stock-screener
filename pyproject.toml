@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ai-stock-screener"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI-powered CLI tool that screens stocks using technical and fundamental indicators."
 authors = ["Ilia Buleh <ilia.buleh@gmail.com>"]
 readme = "README.md"
@@ -18,7 +18,8 @@ numpy = "^1.26"
 typer = "^0.16.0"
 
 [tool.poetry.scripts]
-screener = "ai_screener.cli:main"
+# screener = "ai_screener.cli:main"
+screener = "ai_screener.cli:cli_entry"
 
 [build-system]
 requires = ["poetry-core"]

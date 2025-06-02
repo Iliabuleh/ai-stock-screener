@@ -10,10 +10,13 @@ def main():
                         help="Run mode: eval (use provided tickers) or discovery (scan S&P 500)")
     parser.add_argument("--tickers", type=str,
                         help="Comma-separated list of tickers for eval mode (e.g., AAPL,NVDA,MSFT)")
-    parser.add_argument("--period", default="6mo", help="Historical data period (default: 6mo)")
+    parser.add_argument("--period", default="1y", help="Historical data period (default: 1y)")
     parser.add_argument("--future_days", type=int, default=5, help="Days ahead to evaluate returns (default: 5)")
     parser.add_argument("--threshold", type=float, default=0.5, help="Label threshold (default: 0.0 for any growth)")
     parser.add_argument("--n_estimators", type=int, default=300, help="RandomForest trees (default: 300)")
+    parser.add_argument("--no_integrate_market", action="store_true",
+                    help="Disable integration of SPY market data into training (default: enabled)")
+
 
     args = parser.parse_args()
 
@@ -21,7 +24,8 @@ def main():
         "period": args.period,
         "future_days": args.future_days,
         "threshold": args.threshold,
-        "n_estimators": args.n_estimators
+        "n_estimators": args.n_estimators,
+        "integrate_market": not args.no_integrate_market
     }
 
     print("\n🛠️  Configuration Parameters (overrides or defaults):")
@@ -39,6 +43,12 @@ def main():
         tickers = get_sp500_tickers()
         print(f"🔎 Discovery Mode: Screening {len(tickers)} S&P 500 tickers...\n")
         run_screening(tickers, config)
+
+
+def cli_entry():
+    import sys
+    sys.argv[0] = "screener"  # Optional: makes help text look nicer
+    main()
 
 if __name__ == "__main__":
     main()

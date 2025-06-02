@@ -1,3 +1,4 @@
+
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
@@ -6,11 +7,12 @@ from sklearn.model_selection import train_test_split
 import sys
 
 # 🔧 Centralized list of features used in training & prediction
-FEATURE_COLUMNS = [
-    "PE_ratio", "RSI", "SMA_50", "SMA_200", "Volume", "Volume_Avg",
+BASE_FEATURE_COLUMNS = [
+    "PE_ratio", "RSI", "Volume", "Volume_Avg",
     "MACD", "MACD_signal", "BB_upper", "BB_lower",
     "Stoch_K", "Stoch_D", "ATR"
 ]
+FEATURE_COLUMNS = BASE_FEATURE_COLUMNS.copy()
 
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -22,13 +24,24 @@ def get_sp500_tickers():
         print(f"Error fetching S&P 500 tickers: {e}")
         return []
 
-def fetch_data(ticker, config):
-    print(f"🔍 Fetching {ticker}...")
+def initialize_feature_columns(tickers, config):
+    stock = yf.Ticker(tickers[0])
+    data = stock.history(period=config["period"])
+    sma_lengths = [20, 50, 100, 150, 200]
+    for length in sma_lengths:
+        if len(data) >= length:
+            sma_col = f"SMA_{length}"
+            if sma_col not in FEATURE_COLUMNS:
+                FEATURE_COLUMNS.append(sma_col)
+
+def fetch_data(ticker, config, is_market=False):
+    label_info = "(Market Data)" if is_market else ""
+    print(f"🔍 Fetching {ticker}... {label_info}")
     stock = yf.Ticker(ticker)
     info = stock.info
     pe_ratio = info.get("trailingPE", None)
 
-    if pe_ratio is None or pe_ratio > 1000:
+    if not is_market and (pe_ratio is None or pe_ratio > 1000):
         print(f"❌ Skipped {ticker} due to missing or extreme P/E ratio.")
         return None
 
@@ -40,10 +53,13 @@ def fetch_data(ticker, config):
     try:
         # 📈 Technical indicators
         data["RSI"] = ta.rsi(data["Close"], length=14)
-        data["SMA_50"] = ta.sma(data["Close"], length=50)
-        data["SMA_200"] = ta.sma(data["Close"], length=200)
         data["Volume_Avg"] = data["Volume"].rolling(window=20).mean()
-        data["PE_ratio"] = pe_ratio
+        data["PE_ratio"] = pe_ratio if not is_market else 15  # dummy if market
+
+        for col in FEATURE_COLUMNS:
+            if col.startswith("SMA_"):
+                length = int(col.split("_")[1])
+                data[col] = ta.sma(data["Close"], length=length)
 
         macd = ta.macd(data["Close"])
         data["MACD"] = macd["MACD_12_26_9"]
@@ -59,17 +75,19 @@ def fetch_data(ticker, config):
 
         data["ATR"] = ta.atr(data["High"], data["Low"], data["Close"], length=14)
 
-        # 📊 Labeling for training
-        data["Future_Return"] = data["Close"].shift(-config["future_days"]) / data["Close"] - 1
-        data["Label"] = (data["Future_Return"] > config["threshold"]).astype(int)
+        if not is_market:
+            # 📊 Labeling for training
+            data["Future_Return"] = data["Close"].shift(-config["future_days"]) / data["Close"] - 1
+            data["Label"] = (data["Future_Return"] > config["threshold"]).astype(int)
+            label_counts = data["Label"].value_counts()
+            print(f"{ticker} — Label value counts:")
+            print(label_counts.to_string())
+        else:
+            print(f"{ticker} — Market indicators (no labels applied)")
 
-
-        label_counts = data["Label"].value_counts()
-        print(f"{ticker} — Label value counts:")
-        print(label_counts.to_string())
         print(f"{ticker} — Final usable rows after dropna: {len(data.dropna())}")
-
         return data.dropna()
+
     except Exception as e:
         print(f"⚠️ Error computing indicators for {ticker}: {e}")
         return None
@@ -100,7 +118,25 @@ def train_model(df, config):
 
 def run_screening(tickers, config):
     print("\n📥 Starting screening process...\n")
+
+    initialize_feature_columns(tickers, config)
+
+    print("🧾 Feature summary before training:")
+    print(f"   ➤ Using {len(FEATURE_COLUMNS)} technical indicators:")
+    for feat in FEATURE_COLUMNS:
+        print(f"     • {feat}")
+    print()
+
     all_data = []
+
+    # Fetch SPY market context first (print-only or also for training)
+    spy_df = fetch_data("SPY", config, is_market=True)
+    if spy_df is not None:
+        print(f"📊 SPY Market overview: RSI={spy_df.iloc[-1]['RSI']:.2f}, MACD={spy_df.iloc[-1]['MACD']:.2f}, ATR={spy_df.iloc[-1]['ATR']:.2f}")
+        if config.get("integrate_market"):
+            spy_df["Ticker"] = "SPY_MARKET"
+            spy_df["Label"] = 0  # Dummy label to keep shape
+            all_data.append(spy_df)
 
     for ticker in tickers:
         try:
@@ -117,7 +153,8 @@ def run_screening(tickers, config):
         sys.exit(1)
 
     combined = pd.concat(all_data)
-    print(f"📦 Total training samples: {len(combined)} from {len(all_data)} tickers")
+    combined = combined[combined["Ticker"] != "SPY_MARKET"] if not config.get("integrate_market") else combined
+    print(f"📦 Total training samples: {len(combined)} from {len(all_data)} sources")
     print(combined.groupby('Ticker')["Label"].value_counts().to_string())
 
     clf = train_model(combined, config)
@@ -126,7 +163,7 @@ def run_screening(tickers, config):
         return
 
     print("\n📊 Predicted High-Growth Stocks Based on Latest Data:\n")
-    latest = combined.groupby("Ticker").tail(1)
+    latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
     X_pred = latest[FEATURE_COLUMNS]
     probs = clf.predict_proba(X_pred)
     preds = clf.predict(X_pred)
