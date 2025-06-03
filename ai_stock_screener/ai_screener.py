@@ -221,20 +221,37 @@ def run_screening(tickers, config):
     preds = clf.predict(X_pred)
 
     results = []
+
     for i, pred in enumerate(preds):
-        ticker = latest.iloc[i]["Ticker"]
+        row = latest.iloc[i]
+        ticker = row["Ticker"]
         prob = probs[i][1]
+
+        future_return = row.get("Future_Return", None)
+        volatility = row.get("Volatility_Future", None)
+        rv_score = (
+            future_return / (volatility + 1e-6)
+            if pd.notnull(future_return) and pd.notnull(volatility)
+            else None
+        )
+
+        summary = f"— Confidence: {prob:.2f}"
+        if pd.notnull(future_return) and pd.notnull(volatility):
+            summary += f" — return-volatility: {rv_score:.2f} (Return: {future_return*100:.2f}%, Volatility: {volatility*100:.2f}%)"
+
         if pred == 1:
-            print(f"📈 {ticker}: Predicted to GROW > {config['threshold']*100:.1f}% in {config['future_days']} days — Confidence: {prob:.2f}")
-            results.append((ticker, prob))
+            print(f"📈 {ticker}: Predicted to GROW > {config['threshold']*100:.1f}% in {config['future_days']} days {summary}")
+            results.append((ticker, prob, rv_score))
         else:
-            print(f"📉 {ticker}: Predicted to NOT grow significantly — Confidence: {(1 - prob):.2f}")
+            print(f"📉 {ticker}: Predicted to NOT grow significantly {summary}")
 
     if not results:
         print("\n❌ No high-growth candidates identified.")
         return
 
     print("\n🎯 High-confidence candidates sorted by prediction certainty:")
-    results = sorted(results, key=lambda x: x[1], reverse=True)
-    for ticker, prob in results:
-        print(f"✅ {ticker} — Confidence: {prob:.2f}")
+    for ticker, prob, rv_score in sorted(results, key=lambda x: x[1], reverse=True):
+        line = f"✅ {ticker} — Confidence: {prob:.2f}"
+        if rv_score is not None:
+            line += f", return-volatility: {rv_score:.2f}"
+        print(line)
