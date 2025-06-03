@@ -15,6 +15,8 @@ def main():
     parser.add_argument("--threshold", type=float, default=0.5, help="Label threshold (default: 0.0 for any growth)")
     parser.add_argument("--n_estimators", type=int, default=300, help="RandomForest trees (default: 300)")
     parser.add_argument("--use_sharpe_labeling", type=float, default=1.0, help="Enable return-volatility labeling with the given threshold (default: 1.0)")
+    parser.add_argument("--model", type=str, default="random_forest", choices=["random_forest", "xgboost"],
+                        help="Which model to train: 'random_forest' or 'xgboost'. Default is random_forest.")
     parser.add_argument("--no_integrate_market", action="store_true",
                     help="Disable integration of SPY market data into training (default: enabled)")
 

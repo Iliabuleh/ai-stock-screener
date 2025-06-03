@@ -4,6 +4,7 @@ import pandas as pd
 import pandas_ta as ta
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
 import sys
 
 # 🔧 Centralized list of features used in training & prediction
@@ -141,29 +142,37 @@ def train_model(df, config):
         return None
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
-    clf = RandomForestClassifier(
-        n_estimators=config["n_estimators"], n_jobs=-1, random_state=42
+        X, y, test_size=0.2, random_state=config.get("seed", 42)
     )
 
-    # clf.fit(X_train, y_train)
-    # acc = clf.score(X_test, y_test)
-    # print(f"\n✅ Model accuracy on held-out test set: {acc:.2f}")
-    # return clf
+    model_type = config.get("model", "random_forest")
+    if model_type == "xgboost":
+        clf = XGBClassifier(
+            n_estimators=config["n_estimators"],
+            max_depth=config.get("max_depth", 6),
+            learning_rate=config.get("learning_rate", 0.1),
+            n_jobs=-1,
+            random_state=config.get("seed", 42),
+            verbosity=0,
+            use_label_encoder=False
+        )
+    else:
+        clf = RandomForestClassifier(
+            n_estimators=config["n_estimators"],
+            max_depth=config.get("max_depth", None),
+            n_jobs=-1,
+            random_state=config.get("seed", 42)
+        )
 
     clf.fit(X_train, y_train)
     acc = clf.score(X_test, y_test)
-    print(f"\n✅ Model accuracy on held-out test set: {acc:.2f}")
+    print(f"\n✅ {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
 
-    # 🔍 Feature Importance
-    importances = clf.feature_importances_
-    importance_dict = dict(zip(FEATURE_COLUMNS, importances))
-    sorted_importances = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
-
-    print("\n🔬 Feature Importances (descending):")
-    for feat, weight in sorted_importances:
-        print(f"   • {feat:<20} → {weight:.4f}")
+    # Optional: Save the model
+    if config.get("save_model_path"):
+        import joblib
+        joblib.dump(clf, config["save_model_path"])
+        print(f"💾 Saved model to {config['save_model_path']}")
 
     return clf
 
