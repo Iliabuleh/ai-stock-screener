@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--use_sharpe_labeling", type=float, default=1.0, help="Enable return-volatility labeling with the given threshold (default: 1.0)")
     parser.add_argument("--model", type=str, default="random_forest", choices=["random_forest", "xgboost"],
                         help="Which model to train: 'random_forest' or 'xgboost'. Default is random_forest.")
+    parser.add_argument("--grid_search", type=int, default=0, 
+                        help="Enable grid search over model hyperparameters (1 = enabled, 0 = disabled)")
     parser.add_argument("--no_integrate_market", action="store_true",
                     help="Disable integration of SPY market data into training (default: enabled)")
 
@@ -29,6 +31,8 @@ def main():
         "threshold": args.threshold,
         "n_estimators": args.n_estimators,
         "use_sharpe_labeling": args.use_sharpe_labeling,
+        "model": args.model,
+        "grid_search": args.grid_search,
         "integrate_market": not args.no_integrate_market
     }
 

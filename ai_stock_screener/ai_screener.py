@@ -3,8 +3,9 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split,GridSearchCV
 from xgboost import XGBClassifier
+import joblib
 import sys
 
 # 🔧 Centralized list of features used in training & prediction
@@ -146,31 +147,60 @@ def train_model(df, config):
     )
 
     model_type = config.get("model", "random_forest")
+    grid_search = config.get("grid_search", False)
+
     if model_type == "xgboost":
-        clf = XGBClassifier(
-            n_estimators=config["n_estimators"],
-            max_depth=config.get("max_depth", 6),
-            learning_rate=config.get("learning_rate", 0.1),
+        base_model = XGBClassifier(
             n_jobs=-1,
             random_state=config.get("seed", 42),
             verbosity=0,
             use_label_encoder=False
         )
+        param_grid = {
+            "n_estimators": [100, 300, 1000, 2000],
+            "max_depth": [3, 5, 7, 9],
+            "learning_rate": [0.01, 0.05, 0.1, 0.2],
+        }
     else:
-        clf = RandomForestClassifier(
-            n_estimators=config["n_estimators"],
-            max_depth=config.get("max_depth", None),
+        base_model = RandomForestClassifier(
             n_jobs=-1,
             random_state=config.get("seed", 42)
         )
+        param_grid = {
+            "n_estimators": [100, 300, 1000, 2000],
+            "max_depth": [None, 10, 20, 30],
+        }
 
-    clf.fit(X_train, y_train)
+    if grid_search:
+        print(f"\n🔍 Performing grid search for {model_type}...")
+        grid = GridSearchCV(base_model, param_grid, cv=3, scoring="accuracy", n_jobs=-1)
+        grid.fit(X_train, y_train)
+        clf = grid.best_estimator_
+        print(f"✅ Best parameters found: {grid.best_params_}")
+    else:
+        if model_type == "xgboost":
+            clf = XGBClassifier(
+                n_estimators=config["n_estimators"],
+                max_depth=config.get("max_depth", 6),
+                learning_rate=config.get("learning_rate", 0.1),
+                n_jobs=-1,
+                random_state=config.get("seed", 42),
+                verbosity=0,
+                use_label_encoder=False
+            )
+        else:
+            clf = RandomForestClassifier(
+                n_estimators=config["n_estimators"],
+                max_depth=config.get("max_depth", None),
+                n_jobs=-1,
+                random_state=config.get("seed", 42)
+            )
+        clf.fit(X_train, y_train)
+
     acc = clf.score(X_test, y_test)
     print(f"\n✅ {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
 
-    # Optional: Save the model
     if config.get("save_model_path"):
-        import joblib
         joblib.dump(clf, config["save_model_path"])
         print(f"💾 Saved model to {config['save_model_path']}")
 
