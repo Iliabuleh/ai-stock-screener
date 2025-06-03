@@ -10,7 +10,9 @@ import sys
 BASE_FEATURE_COLUMNS = [
     "PE_ratio", "RSI", "Volume", "Volume_Avg",
     "MACD", "MACD_signal", "BB_upper", "BB_lower",
-    "Stoch_K", "Stoch_D", "ATR"
+    "Stoch_K", "Stoch_D", "ATR",
+    "Return_1d", "Return_5d", "Volatility_20d",
+    "Price_vs_SMA50", "Price_vs_SMA200", "Rel_Strength_SPY"
 ]
 FEATURE_COLUMNS = BASE_FEATURE_COLUMNS.copy()
 
@@ -34,7 +36,7 @@ def initialize_feature_columns(tickers, config):
             if sma_col not in FEATURE_COLUMNS:
                 FEATURE_COLUMNS.append(sma_col)
 
-def fetch_data(ticker, config, is_market=False):
+def fetch_data(ticker, config, is_market=False, spy_close=None):
     label_info = "(Market Data)" if is_market else ""
     print(f"🔍 Fetching {ticker}... {label_info}")
     stock = yf.Ticker(ticker)
@@ -75,8 +77,21 @@ def fetch_data(ticker, config, is_market=False):
 
         data["ATR"] = ta.atr(data["High"], data["Low"], data["Close"], length=14)
 
+        # 📉 Price Action Features
+        data["Return_1d"] = data["Close"].pct_change()
+        data["Return_5d"] = data["Close"].pct_change(5)
+        data["Volatility_20d"] = data["Return_1d"].rolling(window=20).std()
+        data["Price_vs_SMA50"] = data["Close"] / data[f"SMA_50"] if "SMA_50" in data else None
+        data["Price_vs_SMA200"] = data["Close"] / data[f"SMA_200"] if "SMA_200" in data else None
+
+        # 📊 Relative Strength vs SPY
+        if not is_market and spy_close is not None:
+            aligned = pd.concat([data["Close"], spy_close], axis=1, join="inner")
+            aligned.columns = ["Stock_Close", "SPY_Close"]
+            data["Rel_Strength_SPY"] = aligned["Stock_Close"] / aligned["SPY_Close"]
+
+        # 📊 Labeling for training
         if not is_market:
-            # 📊 Labeling for training
             data["Future_Return"] = data["Close"].shift(-config["future_days"]) / data["Close"] - 1
             data["Label"] = (data["Future_Return"] > config["threshold"]).astype(int)
             label_counts = data["Label"].value_counts()
@@ -131,6 +146,7 @@ def run_screening(tickers, config):
 
     # Fetch SPY market context first (print-only or also for training)
     spy_df = fetch_data("SPY", config, is_market=True)
+    spy_close_series = spy_df["Close"] if spy_df is not None else None
     if spy_df is not None:
         print(f"📊 SPY Market overview: RSI={spy_df.iloc[-1]['RSI']:.2f}, MACD={spy_df.iloc[-1]['MACD']:.2f}, ATR={spy_df.iloc[-1]['ATR']:.2f}")
         if config.get("integrate_market"):
@@ -140,7 +156,7 @@ def run_screening(tickers, config):
 
     for ticker in tickers:
         try:
-            df = fetch_data(ticker, config)
+            df = fetch_data(ticker, config, spy_close=spy_close_series)
             if df is not None:
                 print(f"✅ Using {ticker} for training.\n")
                 df["Ticker"] = ticker
