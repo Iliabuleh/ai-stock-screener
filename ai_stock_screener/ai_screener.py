@@ -93,7 +93,27 @@ def fetch_data(ticker, config, is_market=False, spy_close=None):
         # 📊 Labeling for training
         if not is_market:
             data["Future_Return"] = data["Close"].shift(-config["future_days"]) / data["Close"] - 1
+            data["Volatility_Future"] = data["Return_1d"].rolling(window=config["future_days"]).std()
+
+            # Standard labeling
             data["Label"] = (data["Future_Return"] > config["threshold"]).astype(int)
+
+            # Optional: override with return-volatility (Sharpe-like) labeling
+            sharpe_threshold = config.get("use_sharpe_labeling", None)
+            if sharpe_threshold is not None:
+                data["Sharpe_Like"] = data["Future_Return"] / (data["Volatility_Future"] + 1e-6)
+                data["Label"] = (data["Sharpe_Like"] > sharpe_threshold).astype(int)
+
+                valid_sharpe = data["Sharpe_Like"].dropna()
+                if not valid_sharpe.empty:
+                    total = len(valid_sharpe)
+                    accepted = (valid_sharpe > sharpe_threshold).sum()
+                    rejected = total - accepted
+                    print(f"{ticker} — return-volatility summary (threshold {sharpe_threshold}):")
+                    print(f"   • Accepted: {accepted} / {total} rows")
+                    print(f"   • Rejected: {rejected} rows")
+                    print(f"   • Mean: {valid_sharpe.mean():.2f}, Median: {valid_sharpe.median():.2f}, Max: {valid_sharpe.max():.2f}, Min: {valid_sharpe.min():.2f}")
+
             label_counts = data["Label"].value_counts()
             print(f"{ticker} — Label value counts:")
             print(label_counts.to_string())

@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--future_days", type=int, default=5, help="Days ahead to evaluate returns (default: 5)")
     parser.add_argument("--threshold", type=float, default=0.5, help="Label threshold (default: 0.0 for any growth)")
     parser.add_argument("--n_estimators", type=int, default=300, help="RandomForest trees (default: 300)")
+    parser.add_argument("--use_sharpe_labeling", type=float, default=1.0, help="Enable return-volatility labeling with the given threshold (default: 1.0)")
     parser.add_argument("--no_integrate_market", action="store_true",
                     help="Disable integration of SPY market data into training (default: enabled)")
 
@@ -25,6 +26,7 @@ def main():
         "future_days": args.future_days,
         "threshold": args.threshold,
         "n_estimators": args.n_estimators,
+        "use_sharpe_labeling": args.use_sharpe_labeling,
         "integrate_market": not args.no_integrate_market
     }
 
