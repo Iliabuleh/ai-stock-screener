@@ -126,9 +126,25 @@ def train_model(df, config):
     clf = RandomForestClassifier(
         n_estimators=config["n_estimators"], n_jobs=-1, random_state=42
     )
+
+    # clf.fit(X_train, y_train)
+    # acc = clf.score(X_test, y_test)
+    # print(f"\n✅ Model accuracy on held-out test set: {acc:.2f}")
+    # return clf
+
     clf.fit(X_train, y_train)
     acc = clf.score(X_test, y_test)
     print(f"\n✅ Model accuracy on held-out test set: {acc:.2f}")
+
+    # 🔍 Feature Importance
+    importances = clf.feature_importances_
+    importance_dict = dict(zip(FEATURE_COLUMNS, importances))
+    sorted_importances = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
+
+    print("\n🔬 Feature Importances (descending):")
+    for feat, weight in sorted_importances:
+        print(f"   • {feat:<20} → {weight:.4f}")
+
     return clf
 
 def run_screening(tickers, config):
