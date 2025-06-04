@@ -51,6 +51,10 @@ poetry run screener --mode eval --tickers AAPL NVDA AMZN
 | `--future_days`  | Days ahead to calculate return and create label. Default: `5`.               |
 | `--threshold`    | Return threshold to label a day as `growth`. Default: `0.0`.                 |
 | `--n_estimators` | Number of trees in the Random Forest model. Default: `100`.                 |
+| `--model`        | Model type to use: `random_forest` or `xgboost`. Default: `random_forest`.  |
+| `--grid_search`  | Enable grid search for hyperparameters (1=enabled, 0=disabled). Default: `1`. |
+| `--ensemble_runs`| Number of models to train and average. Default: `1`.                        |
+| `--use_sharpe_labeling` | Enable return-volatility labeling with given threshold. Default: `1.0`. |
 | `--no_integrate_market` | Disable market trend integration in predictions. Default: False.           |
 
 - **Mode Options**:

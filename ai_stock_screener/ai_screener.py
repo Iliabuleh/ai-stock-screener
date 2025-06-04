@@ -1,11 +1,11 @@
-
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split,GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
 from xgboost import XGBClassifier
 import joblib
+import numpy as np
 import sys
 
 # 🔧 Centralized list of features used in training & prediction
@@ -147,64 +147,77 @@ def train_model(df, config):
     )
 
     model_type = config.get("model", "random_forest")
-    grid_search = config.get("grid_search", False)
+    grid_search = config.get("grid_search", 0)
+    ensemble_runs = config.get("ensemble_runs", 1)
 
-    if model_type == "xgboost":
-        base_model = XGBClassifier(
-            n_jobs=-1,
-            random_state=config.get("seed", 42),
-            verbosity=0,
-            use_label_encoder=False
-        )
-        param_grid = {
-            "n_estimators": [100, 300, 1000, 2000],
-            "max_depth": [3, 5, 7, 9],
-            "learning_rate": [0.01, 0.05, 0.1, 0.2],
-        }
-    else:
-        base_model = RandomForestClassifier(
-            n_jobs=-1,
-            random_state=config.get("seed", 42)
-        )
-        param_grid = {
-            "n_estimators": [100, 300, 1000, 2000],
-            "max_depth": [None, 10, 20, 30],
-        }
-
-    if grid_search:
-        print(f"\n🔍 Performing grid search for {model_type}...")
-        grid = GridSearchCV(base_model, param_grid, cv=3, scoring="accuracy", n_jobs=-1)
-        grid.fit(X_train, y_train)
-        clf = grid.best_estimator_
-        print(f"✅ Best parameters found: {grid.best_params_}")
-    else:
+    def build_model(seed):
         if model_type == "xgboost":
-            clf = XGBClassifier(
-                n_estimators=config["n_estimators"],
-                max_depth=config.get("max_depth", 6),
-                learning_rate=config.get("learning_rate", 0.1),
-                n_jobs=-1,
-                random_state=config.get("seed", 42),
-                verbosity=0,
-                use_label_encoder=False
+            base_model = XGBClassifier(
+                n_jobs=-1, random_state=seed, verbosity=0, use_label_encoder=False
             )
+            param_grid = {
+                "n_estimators": [100, 300, 1000, 2000],
+                "max_depth": [3, 5, 7, 9],
+                "learning_rate": [0.01, 0.05, 0.1, 0.2],
+                "subsample": [0.8, 1.0],
+                "colsample_bytree": [0.8, 1.0],
+                "min_child_weight": [1, 3],
+            }
         else:
-            clf = RandomForestClassifier(
-                n_estimators=config["n_estimators"],
-                max_depth=config.get("max_depth", None),
-                n_jobs=-1,
-                random_state=config.get("seed", 42)
+            base_model = RandomForestClassifier(
+                n_jobs=-1, random_state=seed
             )
-        clf.fit(X_train, y_train)
+            param_grid = {
+                "n_estimators": [100, 300, 1000, 2000],
+                "max_depth": [None, 10, 20, 30],
+                "max_features": ["sqrt", "log2", None],
+                "min_samples_split": [2, 5, 10],
+                "min_samples_leaf": [1, 2, 4]
+            }
 
-    acc = clf.score(X_test, y_test)
-    print(f"\n✅ {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
+        if grid_search:
+            print(f"\n🔍 Performing grid search for {model_type}...")
+            cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
+            search = GridSearchCV(base_model, param_grid, cv=cv, scoring="accuracy", n_jobs=-1)
+            search.fit(X_train, y_train)
+            print(f"✅ Best parameters found: {search.best_params_}")
+            return search.best_estimator_
+        else:
+            base_model.set_params(
+                n_estimators=config.get("n_estimators", 100),
+                max_depth=config.get("max_depth", None),
+                learning_rate=config.get("learning_rate", 0.1) if model_type == "xgboost" else None
+            )
+            base_model.fit(X_train, y_train)
+            return base_model
+
+    if ensemble_runs > 1:
+        print(f"\n🤖 Performing ensemble training with {ensemble_runs} runs...")
+        models = []
+        probs = []
+        for i in range(ensemble_runs):
+            seed = 42 + i
+            clf = build_model(seed)
+            prob = clf.predict_proba(X_test)[:, 1]
+            probs.append(prob)
+            models.append(clf)
+
+        avg_prob = np.mean(probs, axis=0)
+        final_preds = (avg_prob > 0.5).astype(int)
+        acc = (final_preds == y_test).mean()
+        print(f"\n✅ ENSEMBLE {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
+        final_model = models[0]  # return one of the models for later use
+    else:
+        clf = build_model(config.get("seed", 42))
+        acc = clf.score(X_test, y_test)
+        print(f"\n✅ {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
+        final_model = clf
 
     if config.get("save_model_path"):
-        joblib.dump(clf, config["save_model_path"])
+        joblib.dump(final_model, config["save_model_path"])
         print(f"💾 Saved model to {config['save_model_path']}")
 
-    return clf
+    return final_model
 
 def run_screening(tickers, config):
     print("\n📥 Starting screening process...\n")
