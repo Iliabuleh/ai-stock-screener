@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from ai_stock_screener.clock import market_clock
 from ai_stock_screener.ai_screener import get_sp500_tickers, run_screening
 
 def main():
@@ -20,6 +21,8 @@ def main():
     parser.add_argument("--grid_search", type=int, default=1, 
                         help="Enable grid search over model hyperparameters (1 = enabled, 0 = disabled)")
     parser.add_argument("--ensemble_runs", type=int, default=1, help="Number of ensemble runs (default: 1)")
+    parser.add_argument("--run_market_clock", type=int, default=1,
+                        help="Enable market clock analysis before screening (1 = enabled, 0 = disabled)")
     parser.add_argument("--no_integrate_market", action="store_true",
                     help="Disable integration of SPY market data into training (default: enabled)")
 
@@ -37,6 +40,12 @@ def main():
         "ensemble_runs": args.ensemble_runs,
         "integrate_market": not args.no_integrate_market
     }
+
+    market_clock_data = None
+    if args.run_market_clock:
+        print("\n📊 Running market condition clock...")
+        market_clock_data = market_clock()
+
 
     print("\n🛠️  Configuration Parameters (overrides or defaults):")
     for k, v in config.items():

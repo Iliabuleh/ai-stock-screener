@@ -16,6 +16,9 @@ setuptools = "^69.2.0"
 numpy = "^1.26"
 typer = "^0.16.0"
 pandas-ta = "^0.3.14b0"
+xgboost = "^3.0.2"
+joblib = "^1.5.1"
+fear-and-greed = "^0.4"
 
 [tool.poetry.scripts]
 # screener = "ai_stock_screener.cli:main"

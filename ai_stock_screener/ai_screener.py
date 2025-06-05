@@ -183,11 +183,13 @@ def train_model(df, config):
             print(f"✅ Best parameters found: {search.best_params_}")
             return search.best_estimator_
         else:
-            base_model.set_params(
-                n_estimators=config.get("n_estimators", 100),
-                max_depth=config.get("max_depth", None),
-                learning_rate=config.get("learning_rate", 0.1) if model_type == "xgboost" else None
-            )
+            # Dynamically prepare only allowed parameters
+            override_params = {}
+            for param in param_grid:
+                if param in config:
+                    override_params[param] = config[param]
+
+            base_model.set_params(**override_params)
             base_model.fit(X_train, y_train)
             return base_model
 
