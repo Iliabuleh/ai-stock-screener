@@ -1,11 +1,6 @@
 import yfinance as yf
-import requests
 import fear_and_greed as fg
-import pandas as pd
 
-
-import yfinance as yf
-import pandas as pd
 
 def detect_recent_crossover(short_sma, long_sma, label, df, days_lookback=20):
     """
@@ -43,7 +38,7 @@ def get_spy_trend():
     df['SMA20'] = df['Close'].rolling(window=20).mean()
     df['SMA50'] = df['Close'].rolling(window=50).mean()
     df['SMA200'] = df['Close'].rolling(window=200).mean()
-    
+
     df = df.dropna(subset=["SMA20", "SMA50", "SMA200"])
     if df.empty:
         return {
@@ -55,7 +50,7 @@ def get_spy_trend():
     latest = df.iloc[-1]
     sma20 = latest["SMA20"]
     sma50 = latest["SMA50"]
-    
+
     # Trend based on SMA20 vs SMA50
     if sma20 > sma50:
         trend = "🟢 Bullish (SMA20 > SMA50)"
@@ -99,8 +94,7 @@ def get_vix_level():
 
 def get_fear_and_greed_level():
     try:
-        import fear_and_greed
-        index = fear_and_greed.get()
+        index = fg.get()
         value = index.value
 
         if value >= 75:
