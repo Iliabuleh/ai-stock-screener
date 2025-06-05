@@ -1,57 +1,38 @@
 import yfinance as yf
 import fear_and_greed as fg
 
-
-def detect_recent_crossover(short_sma, long_sma, label, df, days_lookback=20):
-    """
-    Looks back `days_lookback` periods to detect recent crossovers.
-    Returns a string describing the event and how many days ago it occurred.
-    """
-    for i in range(1, days_lookback + 1):
-        if len(df) < i + 1:
-            break
-        prev = df.iloc[-i - 1]
-        curr = df.iloc[-i]
-
-        # Bullish crossover
-        if prev[short_sma] < prev[long_sma] and curr[short_sma] > curr[long_sma]:
-            return f"📈 {label} Bullish crossover {i} days ago"
-        # Bearish crossover
-        elif prev[short_sma] > prev[long_sma] and curr[short_sma] < curr[long_sma]:
-            return f"📉 {label} Bearish crossover {i} days ago"
-
-    return f"⏸️ No {label} crossover in last {days_lookback} days"
-
 def get_spy_trend():
-    # Fetch SPY historical data
-    ticker = yf.Ticker("SPY")
-    df = ticker.history(period="18mo")
+    # Load 18 months of SPY data for long-term SMA calculation
+    df = yf.Ticker("SPY").history(period="18mo")
 
     if df.empty or "Close" not in df.columns:
         return {
             "trend": "❌ SPY data unavailable.",
             "sma_values": {},
-            "crossovers": []
+            "crossovers": [],
+            "overextension": "N/A"
         }
 
-    # Compute SMAs
-    df['SMA20'] = df['Close'].rolling(window=20).mean()
-    df['SMA50'] = df['Close'].rolling(window=50).mean()
-    df['SMA200'] = df['Close'].rolling(window=200).mean()
+    df["SMA20"] = df["Close"].rolling(20).mean()
+    df["SMA50"] = df["Close"].rolling(50).mean()
+    df["SMA200"] = df["Close"].rolling(200).mean()
+    df = df.dropna()
 
-    df = df.dropna(subset=["SMA20", "SMA50", "SMA200"])
     if df.empty:
         return {
-            "trend": "❌ Not enough data for SMA calculation.",
+            "trend": "❌ Not enough data after SMA calculation.",
             "sma_values": {},
-            "crossovers": []
+            "crossovers": [],
+            "overextension": "N/A"
         }
 
     latest = df.iloc[-1]
+    close_price = latest["Close"]
     sma20 = latest["SMA20"]
     sma50 = latest["SMA50"]
+    sma200 = latest["SMA200"]
 
-    # Trend based on SMA20 vs SMA50
+    # 🔹 Determine Trend
     if sma20 > sma50:
         trend = "🟢 Bullish (SMA20 > SMA50)"
     elif sma20 < sma50:
@@ -59,18 +40,55 @@ def get_spy_trend():
     else:
         trend = "🟡 Neutral (SMA20 ≈ SMA50)"
 
-    # Detect crossovers
-    crossover_20_50 = detect_recent_crossover("SMA20", "SMA50", "SMA20/50", df)
-    crossover_50_200 = detect_recent_crossover("SMA50", "SMA200", "SMA50/200", df)
+    # 🔹 Crossovers (check last N days)
+    crossovers = []
+    window = 20  # how far back we check
+    recent = df.iloc[-(window+1):]  # +1 for prev day access
 
+    for i in range(1, len(recent)):
+        prev = recent.iloc[i - 1]
+        curr = recent.iloc[i]
+
+        # SMA20/SMA50 crossover
+        if prev["SMA20"] < prev["SMA50"] and curr["SMA20"] > curr["SMA50"]:
+            crossovers.append(f"📈 SMA20 crossed above SMA50 ({window - i} days ago)")
+        elif prev["SMA20"] > prev["SMA50"] and curr["SMA20"] < curr["SMA50"]:
+            crossovers.append(f"📉 SMA20 crossed below SMA50 ({window - i} days ago)")
+
+        # SMA50/SMA200 crossover
+        if prev["SMA50"] < prev["SMA200"] and curr["SMA50"] > curr["SMA200"]:
+            crossovers.append(f"🌟 Golden Cross: SMA50 above SMA200 ({window - i} days ago)")
+        elif prev["SMA50"] > prev["SMA200"] and curr["SMA50"] < curr["SMA200"]:
+            crossovers.append(f"💀 Death Cross: SMA50 below SMA200 ({window - i} days ago)")
+
+        # SMA20/SMA200 crossover
+        if prev["SMA20"] < prev["SMA200"] and curr["SMA20"] > curr["SMA200"]:
+            crossovers.append(f"📈 SMA20 crossed above SMA200 ({window - i} days ago)")
+        elif prev["SMA20"] > prev["SMA200"] and curr["SMA20"] < curr["SMA200"]:
+            crossovers.append(f"📉 SMA20 crossed below SMA200 ({window - i} days ago)")
+
+    # 🔹 Overextension from SMA200
+    over_pct = ((close_price - sma200) / sma200) * 100
+    if over_pct > 10:
+        overext = f"🔴 Overbought (+{over_pct:.2f}% above SMA200)"
+    elif 5 < over_pct <= 10:
+        overext = f"🟡 Stretched (+{over_pct:.2f}%)"
+    elif over_pct <= 5:
+        overext = f"🟢 Normal (+{over_pct:.2f}%)"
+    else:
+        overext = f"⚠️ Below SMA200 ({over_pct:.2f}%)"
+
+    # 🧾 Return full summary
     return {
         "trend": trend,
         "sma_values": {
             "SMA20": round(sma20, 2),
             "SMA50": round(sma50, 2),
-            "SMA200": round(latest["SMA200"], 2)
+            "SMA200": round(sma200, 2),
+            "Close": round(close_price, 2)
         },
-        "crossovers": [crossover_20_50, crossover_50_200]
+        "crossovers": crossovers or ["No recent crossovers."],
+        "overextension": overext
     }
 
 
@@ -151,9 +169,12 @@ def market_clock():
     result = get_spy_trend()
     print("\n🕒 Market Clock Summary")
     print("-----------------------")
-    print("📈 SPY Trend:",          result["trend"])
-    print("SMA Values:",            result["sma_values"])
-    print("Crossover Signal:",      result["crossovers"])
+    print("📈 SPY Trend:",     result["trend"])
+    print("SMA Values:",       result["sma_values"])
+    print("📐 Overextension:", result["overextension"])
+    print("🔀 Crossovers:")
+    for c in result["crossovers"]:
+        print("   -", c)
     print(f"⚡ VIX Volatility:       {get_vix_level()}")
     print(f"😬 Fear & Greed Index:   {get_fear_and_greed_level()}")
     print(f"📉 Yield Curve (10Y-2Y): {get_yield_curve_level()}")
