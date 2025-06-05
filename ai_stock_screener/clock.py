@@ -149,6 +149,8 @@ def get_yield_curve_level():
 
 def market_clock():
     result = get_spy_trend()
+    print("\n🕒 Market Clock Summary")
+    print("-----------------------")
     print("📈 SPY Trend:",          result["trend"])
     print("SMA Values:",            result["sma_values"])
     print("Crossover Signal:",      result["crossovers"])
