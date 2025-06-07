@@ -126,31 +126,81 @@ poetry run covered-call-div --underlying SPY --etf JEPI
 📈 Total shares: 54.89
 💰 Average price per share: $27.33
 
+📦 All Dividend Payment Rows:
+Price         ETF_NAV Current_MSTY_Price  ... Total_Cumulative_Dividends Portfolio_Value
+Ticker                                    ...                                           
+Date                                      ...                                           
+2024-05-01  27.070000          27.070000  ...                  194.837680     1485.982661
+2024-06-01  31.456128          30.230000  ...                  313.939231     1659.481708
+2024-07-01  41.722470          31.690001  ...                  456.917717     1739.375678
+2024-08-01  32.401910          27.850000  ...                  566.959245     1528.343564
+2024-09-01  30.860853          21.650000  ...                  658.550414     1188.611938
+2024-10-01  28.293066          19.070000  ...                  746.036260     1046.867884
+2024-11-01  57.898519          28.040001  ...                  944.129885     1539.140886
+2024-12-01  95.507159          33.740002  ...                 1152.746350     1851.110352
+2025-01-01  78.898975          28.660000  ...                 1298.178593     1573.397160
+2025-02-01  89.441421          28.920000  ...                 1405.719177     1587.665952
+2025-03-01  74.776758          24.719999  ...                 1501.132543     1356.477915
+2025-04-01  63.843681          18.889999  ...                 1566.157082     1036.374098
+2025-05-01  65.460478          18.270000  ...                 1629.199741     1002.117825
+2025-06-01  98.968330          23.540001  ...                 1741.175962     1291.796600
+2025-06-05  89.745842          20.270000  ...                 1810.588950     1112.493063
+
+[15 rows x 6 columns]
+
 📦 Dividend Payments Summary:
 Total dividend payments: 15
 Total dividends per share: $38.370
 Average dividend per share: $2.558
 
+📦 Recent Dividend Payments:
+Price      Dividend_Per_Share Total_Shares Total_Dividend_Payment Total_Cumulative_Dividends
+Ticker                                                                                      
+Date                                                                                        
+2025-02-01              2.022    54.894585             110.996851                1405.719177
+2025-03-01              1.378    54.894585              75.644738                1501.132543
+2025-04-01              1.336    54.894585              73.339165                1566.157082
+2025-05-01              2.373    54.894585             130.264850                1741.175962
+2025-06-01              1.471    54.894585              80.749934                1810.588950
+
+📈 Last few trading days:
+Price         ETF_NAV Current_MSTY_Price  ... Total_Cumulative_Dividends Portfolio_Value
+Ticker                                    ...                                           
+Date                                      ...                                           
+2025-06-01  98.968330          23.540001  ...                1741.175962     1291.796600
+2025-06-02  96.281784          21.840000  ...                1741.175962     1198.577611
+2025-06-03  105.329231         22.440001  ...                1741.175962     1231.890201
+2025-06-04  98.530253          22.190001  ...                1741.175962     1218.093296
+2025-06-05  89.745842          20.270000  ...                1810.588950     1112.493063
+
+[5 rows x 5 columns]
+
+📊 MSTY Price Analysis:
+💰 Initial MSTY price: $27.07
+📈 Current MSTY price: $20.27
+📉 Price change: $-6.80 (-25.1%)
+⚠️  Note: If initial price seems low, it might be due to stock splits or data availability.
+
 📊 Current Position Analysis:
-📈 Current MSTY price: $20.59
+📈 Current MSTY price: $20.27
 💼 Total shares owned: 54.89
 💵 Total invested: $1,500.00
-💰 Total dividends received: $1,890.60
-📊 Current portfolio value: $1,130.28
-🏆 Total portfolio value: $3,020.88
+💰 Total dividends received: $1,810.59
+📊 Current portfolio value: $1,112.49
+🏆 Total portfolio value: $2,923.08
 
 📈 Performance Analysis:
-🎯 Total return: $1,520.88 (+101.4%)
-📉 Capital gain/loss: $-369.72 (-24.6%)
-💰 Dividend return: $1,890.60 (126.0%)
+🎯 Total return: $1,423.08 (+94.9%)
+📉 Capital gain/loss: $-387.51 (-25.8%)
+💰 Dividend return: $1,810.59 (120.7%)
 
-✅ Capital Recovery: ACHIEVED!
-🎉 Dividend excess: $390.60 (26.0% above total investment)
-⏱️  Recovery timeline:
-   📅 Recovery date: 2025-02-13
-   📊 Time to recovery: 288 days (9.5 months, 0.8 years)
+✅ You recovered your total investment ($1,500.00) in dividends alone!
+🎉 Excess dividend return: $310.59 (20.7% above total investment)
+⏱️  Time to capital recovery:
+   📅 Recovery date: 2025-02-01
+   📊 Time taken: 276 days (9.1 months, 0.8 years)
 
-✅ Overall Result: PROFITABLE!
+✅ Profitable investment!
 ```
 
 ## 🎯 Key Metrics Explained

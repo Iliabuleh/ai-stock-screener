@@ -89,6 +89,16 @@ def main():
     # Add ETF price data
     etf_df[f'Current_{etf_ticker}_Price'] = etf_data['Close'].reindex(etf_df.index, method='ffill')
     
+    # Calculate theoretical ETF NAV based on underlying stock movement (like original version)
+    initial_underlying_price = etf_df[f'{underlying}_Close'].iloc[0]
+    # Use first ETF price as baseline for NAV calculation
+    initial_etf_price_for_nav = etf_df[f'Current_{etf_ticker}_Price'].iloc[0]
+    if hasattr(initial_etf_price_for_nav, 'item'):
+        initial_etf_price_for_nav = initial_etf_price_for_nav.item()
+    
+    etf_df['ETF_NAV'] = (etf_df[f'{underlying}_Close'] / initial_underlying_price) * initial_etf_price_for_nav
+    etf_df['ETF_NAV_PostDiv'] = etf_df['ETF_NAV'].copy()
+    
     # Initialize columns for tracking investments
     etf_df['Total_Shares'] = 0.0
     etf_df['Total_Investment'] = 0.0
@@ -97,6 +107,7 @@ def main():
     etf_df['Total_Cumulative_Dividends'] = 0.0
     etf_df['Portfolio_Value'] = 0.0
     etf_df['Total_Portfolio_Value'] = 0.0
+    etf_df['Theoretical_NAV_PostDiv'] = 0.0
 
     # Process each investment
     investment_summary = []
@@ -152,6 +163,15 @@ def main():
             if not future_dates.empty:
                 etf_df.loc[future_dates[0], 'Dividend_Per_Share'] = div_amount
 
+    # Simulate ETF_NAV_PostDiv changes over time (like original version)
+    for i in range(1, len(etf_df)):
+        curr_dividend = etf_df['Dividend_Per_Share'].iloc[i]
+        if curr_dividend > 0:
+            prev_nav = etf_df['ETF_NAV_PostDiv'].iloc[i-1]
+            etf_df.iloc[i, etf_df.columns.get_loc('ETF_NAV_PostDiv')] = prev_nav - curr_dividend
+        else:
+            etf_df.iloc[i, etf_df.columns.get_loc('ETF_NAV_PostDiv')] = etf_df['ETF_NAV_PostDiv'].iloc[i-1]
+
     # Calculate dividend payments and portfolio values
     cumulative_dividends = 0.0
     for i in range(len(etf_df)):
@@ -168,6 +188,10 @@ def main():
         etf_df.iloc[i, etf_df.columns.get_loc('Total_Cumulative_Dividends')] = cumulative_dividends
         etf_df.iloc[i, etf_df.columns.get_loc('Portfolio_Value')] = current_price * shares_owned
         etf_df.iloc[i, etf_df.columns.get_loc('Total_Portfolio_Value')] = (current_price * shares_owned) + cumulative_dividends
+        
+        # Calculate theoretical NAV portfolio value (like original version)
+        theoretical_nav_postdiv = etf_df['ETF_NAV_PostDiv'].iloc[i] * shares_owned
+        etf_df.iloc[i, etf_df.columns.get_loc('Theoretical_NAV_PostDiv')] = theoretical_nav_postdiv
 
     # Display investment summary
     print(f"\n💰 Investment Summary:")
@@ -186,6 +210,9 @@ def main():
     # Show dividend payments
     dividend_rows = etf_df[etf_df['Dividend_Per_Share'] > 0]
     if not dividend_rows.empty:
+        print(f"\n📦 All Dividend Payment Rows:")
+        print(dividend_rows[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends', 'Portfolio_Value']])
+        
         print(f"\n📦 Dividend Payments Summary:")
         print(f"Total dividend payments: {len(dividend_rows)}")
         print(f"Total dividends per share: ${dividend_rows['Dividend_Per_Share'].sum():.3f}")
@@ -194,6 +221,27 @@ def main():
         print(f"\n📦 Recent Dividend Payments:")
         recent_divs = dividend_rows[['Dividend_Per_Share', 'Total_Shares', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends']].tail(5)
         print(recent_divs)
+
+    # Also show last few rows for context (like original version)
+    print(f"\n📈 Last few trading days:")
+    print(etf_df[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Cumulative_Dividends', 'Portfolio_Value']].tail())
+
+    # Show price analysis (like original version)
+    current_etf_price = etf_df[f'Current_{etf_ticker}_Price'].iloc[-1]
+    initial_etf_price = etf_df[f'Current_{etf_ticker}_Price'].iloc[0]
+    if hasattr(initial_etf_price, 'item'):
+        initial_etf_price = initial_etf_price.item()
+    if hasattr(current_etf_price, 'item'):
+        current_etf_price = current_etf_price.item()
+        
+    price_change = current_etf_price - initial_etf_price
+    price_change_pct = (price_change / initial_etf_price) * 100
+
+    print(f"\n📊 {etf_ticker} Price Analysis:")
+    print(f"💰 Initial {etf_ticker} price: ${initial_etf_price:.2f}")
+    print(f"📈 Current {etf_ticker} price: ${current_etf_price:.2f}")
+    print(f"📉 Price change: ${price_change:.2f} ({price_change_pct:+.1f}%)")
+    print(f"⚠️  Note: If initial price seems low, it might be due to stock splits or data availability.")
 
     # Final analysis
     final_shares = etf_df['Total_Shares'].iloc[-1]
@@ -225,9 +273,9 @@ def main():
 
     # Capital recovery analysis
     if final_cumulative_divs >= final_investment:
-        print(f"\n✅ Capital Recovery: ACHIEVED!")
+        print(f"\n✅ You recovered your total investment (${final_investment:,.2f}) in dividends alone!")
         excess = final_cumulative_divs - final_investment
-        print(f"🎉 Dividend excess: ${excess:.2f} ({excess/final_investment*100:.1f}% above total investment)")
+        print(f"🎉 Excess dividend return: ${excess:.2f} ({excess/final_investment*100:.1f}% above total investment)")
         
         # Find recovery date
         recovery_mask = etf_df['Total_Cumulative_Dividends'] >= final_investment
@@ -238,18 +286,18 @@ def main():
             months_to_recovery = days_to_recovery / 30.44
             years_to_recovery = days_to_recovery / 365.25
             
-            print(f"⏱️  Recovery timeline:")
+            print(f"⏱️  Time to capital recovery:")
             print(f"   📅 Recovery date: {recovery_date.strftime('%Y-%m-%d')}")
-            print(f"   📊 Time to recovery: {days_to_recovery} days ({months_to_recovery:.1f} months, {years_to_recovery:.1f} years)")
+            print(f"   📊 Time taken: {days_to_recovery} days ({months_to_recovery:.1f} months, {years_to_recovery:.1f} years)")
     else:
         shortfall = final_investment - final_cumulative_divs
-        print(f"\n❌ Capital Recovery: NOT YET ACHIEVED")
+        print(f"\n❌ Dividends alone have not yet recovered your total investment.")
         print(f"💸 Dividend shortfall: ${shortfall:.2f} ({shortfall/final_investment*100:.1f}% of total investment)")
 
     if total_return > 0:
-        print(f"\n✅ Overall Result: PROFITABLE!")
+        print(f"\n✅ Profitable investment!")
     else:
-        print(f"\n❌ Overall Result: CURRENTLY AT A LOSS")
+        print(f"\n❌ Currently at a loss.")
 
 if __name__ == "__main__":
     main() 
