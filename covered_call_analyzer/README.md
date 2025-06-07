@@ -7,6 +7,7 @@ A powerful CLI tool to analyze dividend returns and capital performance of cover
 - **Analyzes any covered call ETF** (YieldMax, Global X, JPMorgan, etc.)
 - **Calculates real dividend returns** based on actual investment amounts
 - **Shows capital recovery timeline** - when dividends recover your initial investment
+- **Supports multiple investments** - track dollar-cost averaging and multiple purchase dates
 - **Compares ETF performance** vs underlying asset
 - **Uses real market prices** (not adjusted prices) for accurate analysis
 - **Provides total return analysis** including both dividends and capital gains/losses
@@ -50,94 +51,151 @@ poetry run covered-call-div [OPTIONS]
 |------|-------------|---------|---------|
 | `--underlying` | Underlying stock/ETF ticker | `NVDA` | `--underlying QQQ` |
 | `--etf` | Covered call ETF ticker | `NVDY` | `--etf QYLD` |
-| `--investment` | Investment amount in dollars | `1000` | `--investment 5000` |
-| `--period` | Time period for analysis | `2y` | `--period 1y` |
-| `--start-date` | Custom start date (YYYY-MM-DD) | None | `--start-date 2023-01-01` |
+| `--investment` | Investment amount in dollars (can be repeated) | `1000` | `--investment 5000` |
+| `--start-date` | Investment date in YYYY-MM-DD format (can be repeated) | None | `--start-date 2023-01-01` |
+| `--period` | Time period for single investment analysis | `2y` | `--period 1y` |
 | `--help` | Show help message | - | `--help` |
 
 ### Time Period Options:
 - `1d`, `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`, `10y`, `ytd`, `max`
 
+### Multiple Investment Syntax:
+For multiple investments, repeat the `--investment` and `--start-date` flags:
+```bash
+--investment 1000 --start-date 2024-01-01 --investment 500 --start-date 2024-04-01
+```
+**Note**: Number of `--investment` flags must match number of `--start-date` flags.
+
 ## 💡 Usage Examples
 
-### 1. Analyze QYLD (NASDAQ-100 Covered Call ETF)
+### 1. Single Investment - QYLD Analysis
 ```bash
-poetry run covered-call-div --underlying QQQ --etf QYLD --investment 1000
+poetry run covered-call-div --underlying QQQ --etf QYLD --investment 1000 --start-date 2024-01-01
 ```
 
-### 2. Analyze JEPI with Custom Investment Amount
+### 2. Single Investment with Period
 ```bash
 poetry run covered-call-div --underlying SPY --etf JEPI --investment 5000 --period 1y
 ```
 
-### 3. Analyze TSLY from Specific Start Date
+### 3. Multiple Investments - Dollar Cost Averaging
 ```bash
-poetry run covered-call-div --underlying TSLA --etf TSLY --investment 2000 --start-date 2023-06-01
+poetry run covered-call-div --underlying MSTR --etf MSTY \
+  --investment 1000 --start-date 2024-05-01 \
+  --investment 500 --start-date 2024-08-01
 ```
 
-### 4. Analyze MSTY with Large Investment
+### 4. Multiple Investments - Quarterly Strategy
 ```bash
-poetry run covered-call-div --underlying MSTR --etf MSTY --investment 10000 --period 6mo
+poetry run covered-call-div --underlying QQQ --etf QYLD \
+  --investment 2000 --start-date 2024-01-01 \
+  --investment 1000 --start-date 2024-04-01 \
+  --investment 500 --start-date 2024-07-01
 ```
 
-## 📊 Sample Output
+### 5. Large Portfolio Tracking
+```bash
+poetry run covered-call-div --underlying NVDA --etf NVDY \
+  --investment 5000 --start-date 2023-01-01 \
+  --investment 3000 --start-date 2023-06-01 \
+  --investment 2000 --start-date 2024-01-01 \
+  --investment 1000 --start-date 2024-06-01
+```
+
+### 6. Default Analysis (No Flags)
+```bash
+poetry run covered-call-div --underlying SPY --etf JEPI
+```
+*Uses default $1,000 investment over 2 years*
+
+## 📊 Sample Output - Multiple Investments
 
 ```
-📊 Analyzing QYLD (tracking QQQ) with $1,000.00 investment over 2y
-📅 Data range: 2023-06-07 to 2025-06-06
-💰 Initial QYLD price: $17.73
-📈 Shares bought: 56.40 shares
+📊 Analyzing MSTY (tracking MSTR) with 2 investments
+   Investment #1: $1,000.00 on 2024-05-01
+   Investment #2: $500.00 on 2024-08-01
 
-📦 All Dividend Payment Rows:
-[Detailed dividend payment table showing dates, prices, and payments]
+📅 Downloading data from 2024-05-01 to 2025-06-07
 
-📊 Summary:
-Total dividends per share: $4.489
-Total dividends received: $253.19
-Number of dividend payments: 25
-Average dividend per share: $0.180
-Average dividend payment: $10.13
+💰 Investment Summary:
+   #1: $1,000.00 on 2024-05-01 @ $27.07 = 36.94 shares
+   #2: $500.00 on 2024-08-01 @ $27.85 = 17.95 shares
 
-📊 QYLD Price Analysis:
-💰 Initial QYLD price: $17.73
-📈 Current QYLD price: $16.57
-📉 Price change: $-1.16 (-6.5%)
+📊 Overall Investment Stats:
+💵 Total invested: $1,500.00
+📈 Total shares: 54.89
+💰 Average price per share: $27.33
 
-📌 Final Investment Analysis:
-💵 Initial investment: $1,000.00
-💰 Total dividends received: $253.19
-📊 Current portfolio value: $934.57
-🏆 Total portfolio value: $1,187.76
+📦 Dividend Payments Summary:
+Total dividend payments: 15
+Total dividends per share: $38.370
+Average dividend per share: $2.558
 
-📌 Capital Recovery Analysis:
-❌ Dividends alone have not yet recovered your initial investment.
-💸 Dividend shortfall: $746.81 (74.7% of initial investment)
+📊 Current Position Analysis:
+📈 Current MSTY price: $20.59
+💼 Total shares owned: 54.89
+💵 Total invested: $1,500.00
+💰 Total dividends received: $1,890.60
+📊 Current portfolio value: $1,130.28
+🏆 Total portfolio value: $3,020.88
 
-📈 Total Return Analysis:
-🎯 Total return: $187.76 (+18.8%)
-✅ Profitable investment!
+📈 Performance Analysis:
+🎯 Total return: $1,520.88 (+101.4%)
+📉 Capital gain/loss: $-369.72 (-24.6%)
+💰 Dividend return: $1,890.60 (126.0%)
+
+✅ Capital Recovery: ACHIEVED!
+🎉 Dividend excess: $390.60 (26.0% above total investment)
+⏱️  Recovery timeline:
+   📅 Recovery date: 2025-02-13
+   📊 Time to recovery: 288 days (9.5 months, 0.8 years)
+
+✅ Overall Result: PROFITABLE!
 ```
 
 ## 🎯 Key Metrics Explained
 
-### 📊 **Dividend Analysis**
+### 📊 **Investment Tracking (Multiple Investments)**
+- **Investment Summary**: Each purchase with date, price, and shares bought
+- **Overall Stats**: Total invested, total shares, average price per share
+- **Running Analysis**: How your position builds over time
+
+### 💰 **Dividend Analysis**
 - **Total dividends per share**: Cumulative dividend payments per share
-- **Total dividends received**: Total dollar amount of dividends based on shares owned
+- **Total dividends received**: Total dollar amount based on shares owned at each payment date
 - **Average dividend per share**: Mean dividend payment per distribution
 
-### 💰 **Investment Performance**
-- **Initial investment**: Your original dollar investment
-- **Current portfolio value**: Current market value of your shares
-- **Total portfolio value**: Current value + all dividends received
+### 📈 **Performance Analysis**
+- **Total return**: Complete performance including both capital and dividend returns
+- **Capital gain/loss**: Change in share value from total investment to current value
+- **Dividend return**: Total dividend income as percentage of total investment
 
 ### ⏱️ **Capital Recovery Analysis**
-- **Capital recovery**: When total dividends equal your initial investment
-- **Recovery timeline**: How long it takes to recover your investment through dividends alone
-- **Excess return**: Dividend income above your initial investment
+- **Capital recovery**: When total dividends equal your total investment amount
+- **Recovery timeline**: Time from first investment to dividend recovery
+- **Excess return**: Dividend income above your total investment
 
-### 📈 **Total Return**
-- **Total return**: Complete performance including both capital gains/losses AND dividend income
-- **Return percentage**: Total return as a percentage of initial investment
+## 🧠 Investment Strategies Supported
+
+### 💼 **Single Investment Analysis**
+- One-time investment analysis
+- Perfect for analyzing past performance
+- Compare different entry points
+
+### 📈 **Dollar-Cost Averaging (DCA)**
+- Multiple investments over time
+- Analyze average price effects
+- Track recovery timeline across multiple purchases
+
+### 🎯 **Strategic Timing**
+- Compare different investment dates
+- Analyze how timing affects returns
+- Optimize entry points
+
+### 🔄 **Portfolio Building**
+- Track building a position over time
+- See how dividends compound with new investments
+- Analyze total portfolio performance
 
 ## 🧠 Investment Insights
 
@@ -146,17 +204,20 @@ Average dividend payment: $10.13
 - Sideways or mildly bullish markets
 - Portfolio income supplementation
 - "Cash flow recovery" strategy focus
+- Dollar-cost averaging into volatile positions
 
 ### ⚠️ **Potential Drawbacks:**
 - **Capital erosion**: Share prices often decline over time
 - **Opportunity cost**: May underperform in strong bull markets
 - **Complexity**: Multiple moving parts (dividends + price changes)
+- **Timing risk**: Earlier investments may underperform later ones
 
 ### 🎯 **Key Questions This Tool Answers:**
-1. How long until dividends recover my initial investment?
-2. What's my total return including both dividends and capital changes?
-3. How does the ETF perform vs. just holding the underlying asset?
-4. What's the trade-off between dividend income and capital preservation?
+1. How does dollar-cost averaging affect my returns?
+2. When do my dividends recover my total investment?
+3. What's my average price across multiple purchases?
+4. How do different entry dates affect performance?
+5. What's the trade-off between dividend income and capital preservation?
 
 ## 🔍 Understanding the Data
 
@@ -166,8 +227,11 @@ The tool uses `auto_adjust=False` to show **real market prices** rather than adj
 ### **Dividend Mapping**  
 Dividends are mapped to the closest trading day, ensuring accurate timing of income vs. price movements.
 
+### **Multiple Investment Tracking**
+Each investment is tracked separately with its own purchase date and price, then combined for total portfolio analysis.
+
 ### **Share Calculations**
-All dollar amounts are calculated based on the actual number of shares you could buy with your investment amount, providing realistic scenarios.
+All dollar amounts are calculated based on the actual number of shares you could buy at each investment date, providing realistic scenarios.
 
 ## 🚨 Important Notes
 
@@ -175,6 +239,7 @@ All dollar amounts are calculated based on the actual number of shares you could
 - **Covered call strategies** inherently limit upside potential in exchange for income
 - **Market conditions** greatly affect covered call ETF performance
 - **Tax implications** of frequent dividend payments should be considered
+- **Multiple investments** show the power of dollar-cost averaging but also timing risks
 
 ## 🤝 Contributing
 
