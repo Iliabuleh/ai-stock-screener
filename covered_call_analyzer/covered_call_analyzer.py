@@ -2,72 +2,168 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import argparse
+from datetime import datetime
+from typing import List, Tuple
 
 def main():
     """Main CLI entry point for covered call ETF analyzer."""
     # Set up command line arguments
-    parser = argparse.ArgumentParser(description='Analyze covered call ETF dividend returns')
+    parser = argparse.ArgumentParser(description='Analyze covered call ETF dividend returns with support for multiple investments')
     parser.add_argument('--underlying', default='NVDA', help='Underlying stock ticker (default: NVDA)')
     parser.add_argument('--etf', default='NVDY', help='Covered call ETF ticker (default: NVDY)')
-    parser.add_argument('--investment', type=float, default=1000, help='Total investment amount in dollars (default: 1000)')
-    parser.add_argument('--period', default='2y', help='Time period for analysis (default: 2y)')
-    parser.add_argument('--start-date', help='Start date in YYYY-MM-DD format (overrides period)')
+    parser.add_argument('--investment', type=float, action='append', help='Investment amount in dollars. Can be used multiple times for multiple investments.')
+    parser.add_argument('--start-date', action='append', help='Start date in YYYY-MM-DD format. Must match number of --investment flags.')
+    parser.add_argument('--period', default='2y', help='Time period for analysis (default: 2y, used for single investment without start-date)')
     args = parser.parse_args()
 
-    # Define tickers from arguments
+    # Handle investment inputs
+    investments = []
+    
+    if args.investment and args.start_date:
+        # Multiple investments mode with explicit dates
+        if len(args.investment) != len(args.start_date):
+            raise ValueError(f"Number of --investment flags ({len(args.investment)}) must match number of --start-date flags ({len(args.start_date)})")
+        
+        # Validate dates and pair them with investments
+        for amount, date_str in zip(args.investment, args.start_date):
+            try:
+                datetime.strptime(date_str, '%Y-%m-%d')
+                investments.append((amount, date_str))
+            except ValueError:
+                raise ValueError(f"Invalid date format '{date_str}'. Use YYYY-MM-DD format.")
+        
+        print(f"📊 Analyzing {args.etf} (tracking {args.underlying}) with {len(investments)} investments")
+        for i, (amount, date) in enumerate(investments, 1):
+            print(f"   Investment #{i}: ${amount:,.2f} on {date}")
+            
+    elif args.investment and not args.start_date:
+        # Multiple investments without explicit dates - use period to calculate dates
+        print(f"⚠️  Warning: Multiple --investment flags provided without --start-date. Using default 2-year period for the first investment.")
+        amount = args.investment[0]  # Use only the first investment
+        end_date = datetime.now()
+        if args.period == '1y':
+            start_date = (end_date - pd.DateOffset(years=1)).strftime('%Y-%m-%d')
+        elif args.period == '2y':
+            start_date = (end_date - pd.DateOffset(years=2)).strftime('%Y-%m-%d')
+        elif args.period == '6mo':
+            start_date = (end_date - pd.DateOffset(months=6)).strftime('%Y-%m-%d')
+        else:
+            start_date = (end_date - pd.DateOffset(years=2)).strftime('%Y-%m-%d')
+        investments = [(amount, start_date)]
+        print(f"📊 Analyzing {args.etf} (tracking {args.underlying}) with ${amount:,.2f} investment")
+        
+    elif not args.investment and args.start_date:
+        raise ValueError("--start-date provided without --investment. Please provide both flags.")
+        
+    else:
+        # Default investment (no flags provided)
+        end_date = datetime.now()
+        start_date = (end_date - pd.DateOffset(years=2)).strftime('%Y-%m-%d')
+        investments = [(1000.0, start_date)]
+        print(f"📊 Analyzing {args.etf} (tracking {args.underlying}) with $1,000.00 default investment")
+
+    # Sort investments by date
+    investments.sort(key=lambda x: x[1])
+    
+    # Determine data range
+    earliest_date = investments[0][1]
+    latest_date = datetime.now().strftime('%Y-%m-%d')
+    
+    # Download historical data for the full range
     underlying = args.underlying
     etf_ticker = args.etf
-    total_investment = args.investment
-    period = args.period
-    start_date = getattr(args, 'start_date', None)
-
-    print(f"📊 Analyzing {etf_ticker} (tracking {underlying}) with ${total_investment:,.2f} investment over {period}")
-
-    # Download historical data
-    if start_date:
-        nvda = yf.download(underlying, start=start_date, interval="1d", auto_adjust=False)
-        etf_data = yf.download(etf_ticker, start=start_date, interval="1d", auto_adjust=False)
-    else:
-        nvda = yf.download(underlying, period=period, interval="1d", auto_adjust=False)
-        etf_data = yf.download(etf_ticker, period=period, interval="1d", auto_adjust=False)
-
+    
+    print(f"\n📅 Downloading data from {earliest_date} to {latest_date}")
+    underlying_data = yf.download(underlying, start=earliest_date, interval="1d", auto_adjust=False)
+    etf_data = yf.download(etf_ticker, start=earliest_date, interval="1d", auto_adjust=False)
     dividends = yf.Ticker(etf_ticker).dividends
 
-    # Show actual date range
-    if not etf_data.empty:
-        print(f"📅 Data range: {etf_data.index[0].strftime('%Y-%m-%d')} to {etf_data.index[-1].strftime('%Y-%m-%d')}")
-        initial_etf_price = etf_data['Close'].iloc[0].item()  # Use .item() to extract scalar
-        shares_bought = total_investment / initial_etf_price
-    else:
-        print(f"⚠️  Warning: Could not get {etf_ticker} price data. Using normalized pricing.")
-        initial_etf_price = 10  # Fallback to normalized price
-        shares_bought = total_investment / initial_etf_price
+    if etf_data.empty:
+        print(f"⚠️  Error: Could not get {etf_ticker} price data.")
+        return
 
-    print(f"💰 Initial {etf_ticker} price: ${initial_etf_price:.2f}")
-    print(f"📈 Shares bought: {shares_bought:.2f} shares")
-
-    # Prepare ETF NAV table
-    etf_df = nvda[['Close']].copy()
+    # Initialize tracking DataFrames
+    etf_df = underlying_data[['Close']].copy()
     etf_df.rename(columns={'Close': f'{underlying}_Close'}, inplace=True)
-
+    
+    # Add ETF price data
+    etf_df[f'Current_{etf_ticker}_Price'] = etf_data['Close'].reindex(etf_df.index, method='ffill')
+    
+    # Calculate theoretical ETF NAV based on underlying stock movement (like original version)
     initial_underlying_price = etf_df[f'{underlying}_Close'].iloc[0]
-    etf_df['ETF_NAV'] = (etf_df[f'{underlying}_Close'] / initial_underlying_price) * initial_etf_price
-    etf_df['Dividend_Per_Share'] = 0.0
-    etf_df['Cumulative_Dividend_Per_Share'] = 0.0
+    # Use first ETF price as baseline for NAV calculation
+    initial_etf_price_for_nav = etf_df[f'Current_{etf_ticker}_Price'].iloc[0]
+    if hasattr(initial_etf_price_for_nav, 'item'):
+        initial_etf_price_for_nav = initial_etf_price_for_nav.item()
+    
+    etf_df['ETF_NAV'] = (etf_df[f'{underlying}_Close'] / initial_underlying_price) * initial_etf_price_for_nav
     etf_df['ETF_NAV_PostDiv'] = etf_df['ETF_NAV'].copy()
+    
+    # Initialize columns for tracking investments
+    etf_df['Total_Shares'] = 0.0
+    etf_df['Total_Investment'] = 0.0
+    etf_df['Dividend_Per_Share'] = 0.0
+    etf_df['Total_Dividend_Payment'] = 0.0
+    etf_df['Total_Cumulative_Dividends'] = 0.0
+    etf_df['Portfolio_Value'] = 0.0
+    etf_df['Total_Portfolio_Value'] = 0.0
+    etf_df['Theoretical_NAV_PostDiv'] = 0.0
 
-    # Map dividends into ETF table on the closest trading date
-    for div_date, amount in dividends.items():
-        div_date = pd.to_datetime(div_date).tz_localize(None)  # Remove timezone info
-        if div_date in etf_df.index:
-            etf_df.loc[div_date, 'Dividend_Per_Share'] = amount
+    # Process each investment
+    investment_summary = []
+    running_shares = 0.0
+    running_investment = 0.0
+
+    for inv_num, (amount, date) in enumerate(investments, 1):
+        investment_date = pd.to_datetime(date).tz_localize(None)
+        
+        # Find the closest trading date
+        if investment_date in etf_df.index:
+            actual_date = investment_date
         else:
-            # Find next valid trading day in index
+            # Find next available trading date
+            future_dates = etf_df.index[etf_df.index >= investment_date]
+            if future_dates.empty:
+                print(f"⚠️  Warning: Investment date {date} is after available data range. Skipping.")
+                continue
+            actual_date = future_dates[0]
+        
+        # Get price on investment date
+        investment_price = etf_df.loc[actual_date, f'Current_{etf_ticker}_Price']
+        if hasattr(investment_price, 'item'):
+            investment_price = investment_price.item()  # Convert pandas scalar to Python scalar
+        shares_bought = amount / investment_price
+        
+        # Update running totals from this date forward
+        mask = etf_df.index >= actual_date
+        etf_df.loc[mask, 'Total_Shares'] = etf_df.loc[mask, 'Total_Shares'] + shares_bought
+        etf_df.loc[mask, 'Total_Investment'] = etf_df.loc[mask, 'Total_Investment'] + amount
+        
+        running_shares += shares_bought
+        running_investment += amount
+        
+        investment_summary.append({
+            'Investment': inv_num,
+            'Date': actual_date.strftime('%Y-%m-%d'),
+            'Amount': amount,
+            'Price': investment_price,
+            'Shares': shares_bought,
+            'Running_Shares': running_shares,
+            'Running_Investment': running_investment
+        })
+
+    # Map dividends into the DataFrame
+    for div_date, div_amount in dividends.items():
+        div_date = pd.to_datetime(div_date).tz_localize(None)
+        if div_date in etf_df.index:
+            etf_df.loc[div_date, 'Dividend_Per_Share'] = div_amount
+        else:
+            # Find next valid trading day
             future_dates = etf_df.index[etf_df.index > div_date]
             if not future_dates.empty:
-                etf_df.loc[future_dates[0], 'Dividend_Per_Share'] = amount
+                etf_df.loc[future_dates[0], 'Dividend_Per_Share'] = div_amount
 
-    # Simulate ETF_NAV_PostDiv changes over time
+    # Simulate ETF_NAV_PostDiv changes over time (like original version)
     for i in range(1, len(etf_df)):
         curr_dividend = etf_df['Dividend_Per_Share'].iloc[i]
         if curr_dividend > 0:
@@ -76,43 +172,68 @@ def main():
         else:
             etf_df.iloc[i, etf_df.columns.get_loc('ETF_NAV_PostDiv')] = etf_df['ETF_NAV_PostDiv'].iloc[i-1]
 
-    # Calculate actual dollar amounts based on shares owned
-    etf_df['Cumulative_Dividend_Per_Share'] = etf_df['Dividend_Per_Share'].cumsum()
-    etf_df['Total_Dividend_Payment'] = etf_df['Dividend_Per_Share'] * shares_bought
-    etf_df['Total_Cumulative_Dividends'] = etf_df['Cumulative_Dividend_Per_Share'] * shares_bought
+    # Calculate dividend payments and portfolio values
+    cumulative_dividends = 0.0
+    for i in range(len(etf_df)):
+        date = etf_df.index[i]
+        shares_owned = etf_df['Total_Shares'].iloc[i]
+        dividend_per_share = etf_df['Dividend_Per_Share'].iloc[i]
+        current_price = etf_df[f'Current_{etf_ticker}_Price'].iloc[i]
+        
+        # Calculate dividend payment for this date
+        dividend_payment = dividend_per_share * shares_owned
+        cumulative_dividends += dividend_payment
+        
+        etf_df.iloc[i, etf_df.columns.get_loc('Total_Dividend_Payment')] = dividend_payment
+        etf_df.iloc[i, etf_df.columns.get_loc('Total_Cumulative_Dividends')] = cumulative_dividends
+        etf_df.iloc[i, etf_df.columns.get_loc('Portfolio_Value')] = current_price * shares_owned
+        etf_df.iloc[i, etf_df.columns.get_loc('Total_Portfolio_Value')] = (current_price * shares_owned) + cumulative_dividends
+        
+        # Calculate theoretical NAV portfolio value (like original version)
+        theoretical_nav_postdiv = etf_df['ETF_NAV_PostDiv'].iloc[i] * shares_owned
+        etf_df.iloc[i, etf_df.columns.get_loc('Theoretical_NAV_PostDiv')] = theoretical_nav_postdiv
 
-    # Add current ETF price for comparison
-    if not etf_data.empty:
-        # Align ETF data with our DataFrame dates using forward fill for missing dates
-        etf_df[f'Current_{etf_ticker}_Price'] = etf_data['Close'].reindex(etf_df.index, method='ffill')
-    else:
-        etf_df[f'Current_{etf_ticker}_Price'] = etf_df['ETF_NAV']  # Fallback
+    # Display investment summary
+    print(f"\n💰 Investment Summary:")
+    for inv in investment_summary:
+        print(f"   #{inv['Investment']}: ${inv['Amount']:,.2f} on {inv['Date']} @ ${inv['Price']:.2f} = {inv['Shares']:.2f} shares")
+    
+    total_invested = sum(inv['Amount'] for inv in investment_summary)
+    total_shares = sum(inv['Shares'] for inv in investment_summary)
+    avg_price = total_invested / total_shares
+    
+    print(f"\n📊 Overall Investment Stats:")
+    print(f"💵 Total invested: ${total_invested:,.2f}")
+    print(f"📈 Total shares: {total_shares:.2f}")
+    print(f"💰 Average price per share: ${avg_price:.2f}")
 
-    # Calculate portfolio value using actual ETF market price, not the theoretical NAV
-    etf_df['Portfolio_Value'] = etf_df[f'Current_{etf_ticker}_Price'] * shares_bought
-    etf_df['Total_Portfolio_Value'] = etf_df['Portfolio_Value'] + etf_df['Total_Cumulative_Dividends']
-
-    # Keep the theoretical NAV calculation for educational purposes
-    etf_df['Theoretical_NAV_PostDiv'] = etf_df['ETF_NAV_PostDiv'] * shares_bought
-
-    # Display dividend-paying rows
+    # Show dividend payments
     dividend_rows = etf_df[etf_df['Dividend_Per_Share'] > 0]
-    print("📦 All Dividend Payment Rows:")
-    print(dividend_rows[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends', 'Portfolio_Value']])
+    if not dividend_rows.empty:
+        print(f"\n📦 All Dividend Payment Rows:")
+        print(dividend_rows[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends', 'Portfolio_Value']])
+        
+        print(f"\n📦 Dividend Payments Summary:")
+        print(f"Total dividend payments: {len(dividend_rows)}")
+        print(f"Total dividends per share: ${dividend_rows['Dividend_Per_Share'].sum():.3f}")
+        print(f"Average dividend per share: ${dividend_rows['Dividend_Per_Share'].mean():.3f}")
+        
+        print(f"\n📦 Recent Dividend Payments:")
+        recent_divs = dividend_rows[['Dividend_Per_Share', 'Total_Shares', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends']].tail(5)
+        print(recent_divs)
 
-    print(f"\n📊 Summary:")
-    print(f"Total dividends per share: ${dividend_rows['Dividend_Per_Share'].sum():.3f}")
-    print(f"Total dividends received: ${dividend_rows['Total_Dividend_Payment'].sum():.2f}")
-    print(f"Number of dividend payments: {len(dividend_rows)}")
-    print(f"Average dividend per share: ${dividend_rows['Dividend_Per_Share'].mean():.3f}")
-    print(f"Average dividend payment: ${dividend_rows['Total_Dividend_Payment'].mean():.2f}")
-
-    # Also show last few rows for context
+    # Also show last few rows for context (like original version)
     print(f"\n📈 Last few trading days:")
     print(etf_df[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Cumulative_Dividends', 'Portfolio_Value']].tail())
 
-    # Show price analysis
+    # Show price analysis (like original version)
     current_etf_price = etf_df[f'Current_{etf_ticker}_Price'].iloc[-1]
+    initial_etf_price = etf_df[f'Current_{etf_ticker}_Price'].iloc[0]
+    if hasattr(initial_etf_price, 'item'):
+        initial_etf_price = initial_etf_price.item()
+    if hasattr(current_etf_price, 'item'):
+        current_etf_price = current_etf_price.item()
+        
     price_change = current_etf_price - initial_etf_price
     price_change_pct = (price_change / initial_etf_price) * 100
 
@@ -122,56 +243,61 @@ def main():
     print(f"📉 Price change: ${price_change:.2f} ({price_change_pct:+.1f}%)")
     print(f"⚠️  Note: If initial price seems low, it might be due to stock splits or data availability.")
 
-    # 🧾 Final Evaluation
-    final_cumulative_div_total = etf_df['Total_Cumulative_Dividends'].iloc[-1]  # Total dollars received
-    final_portfolio_value = etf_df['Portfolio_Value'].iloc[-1]  # Current portfolio value
+    # Final analysis
+    final_shares = etf_df['Total_Shares'].iloc[-1]
+    final_investment = etf_df['Total_Investment'].iloc[-1]
+    final_cumulative_divs = etf_df['Total_Cumulative_Dividends'].iloc[-1]
+    final_portfolio_value = etf_df['Portfolio_Value'].iloc[-1]
+    final_total_value = etf_df['Total_Portfolio_Value'].iloc[-1]
+    current_price = etf_df[f'Current_{etf_ticker}_Price'].iloc[-1]
 
-    print("\n📌 Final Investment Analysis:")
-    print(f"💵 Initial investment: ${total_investment:,.2f}")
-    print(f"💰 Total dividends received: ${final_cumulative_div_total:.2f}")
+    print(f"\n📊 Current Position Analysis:")
+    print(f"📈 Current {etf_ticker} price: ${current_price:.2f}")
+    print(f"💼 Total shares owned: {final_shares:.2f}")
+    print(f"💵 Total invested: ${final_investment:,.2f}")
+    print(f"💰 Total dividends received: ${final_cumulative_divs:.2f}")
     print(f"📊 Current portfolio value: ${final_portfolio_value:.2f}")
-    print(f"🏆 Total portfolio value: ${final_portfolio_value + final_cumulative_div_total:.2f}")
+    print(f"🏆 Total portfolio value: ${final_total_value:.2f}")
 
-    # Calculate time to capital recovery
-    capital_recovery_date = None
-    if final_cumulative_div_total >= total_investment:
-        # Find when dividends first exceeded initial investment
-        recovery_mask = etf_df['Total_Cumulative_Dividends'] >= total_investment
-        if recovery_mask.any():
-            capital_recovery_date = etf_df[recovery_mask].index[0]
-            
-    print("\n📌 Capital Recovery Analysis:")
-    if final_cumulative_div_total >= total_investment:
-        print(f"✅ You recovered your initial investment (${total_investment:,.2f}) in dividends alone!")
-        excess = final_cumulative_div_total - total_investment
-        print(f"🎉 Excess dividend return: ${excess:.2f} ({excess/total_investment*100:.1f}% above initial investment)")
+    # Performance analysis
+    total_return = final_total_value - final_investment
+    return_pct = (total_return / final_investment) * 100
+    
+    capital_gain_loss = final_portfolio_value - final_investment
+    capital_return_pct = (capital_gain_loss / final_investment) * 100
+
+    print(f"\n📈 Performance Analysis:")
+    print(f"🎯 Total return: ${total_return:.2f} ({return_pct:+.1f}%)")
+    print(f"📉 Capital gain/loss: ${capital_gain_loss:.2f} ({capital_return_pct:+.1f}%)")
+    print(f"💰 Dividend return: ${final_cumulative_divs:.2f} ({final_cumulative_divs/final_investment*100:.1f}%)")
+
+    # Capital recovery analysis
+    if final_cumulative_divs >= final_investment:
+        print(f"\n✅ You recovered your total investment (${final_investment:,.2f}) in dividends alone!")
+        excess = final_cumulative_divs - final_investment
+        print(f"🎉 Excess dividend return: ${excess:.2f} ({excess/final_investment*100:.1f}% above total investment)")
         
-        if capital_recovery_date:
-            start_date = etf_df.index[0]
-            days_to_recovery = (capital_recovery_date - start_date).days
-            months_to_recovery = days_to_recovery / 30.44  # Average month length
-            years_to_recovery = days_to_recovery / 365.25   # Average year length
+        # Find recovery date
+        recovery_mask = etf_df['Total_Cumulative_Dividends'] >= final_investment
+        if recovery_mask.any():
+            recovery_date = etf_df[recovery_mask].index[0]
+            first_investment_date = pd.to_datetime(investments[0][1])
+            days_to_recovery = (recovery_date - first_investment_date).days
+            months_to_recovery = days_to_recovery / 30.44
+            years_to_recovery = days_to_recovery / 365.25
             
             print(f"⏱️  Time to capital recovery:")
-            print(f"   📅 Recovery date: {capital_recovery_date.strftime('%Y-%m-%d')}")
+            print(f"   📅 Recovery date: {recovery_date.strftime('%Y-%m-%d')}")
             print(f"   📊 Time taken: {days_to_recovery} days ({months_to_recovery:.1f} months, {years_to_recovery:.1f} years)")
     else:
-        print(f"❌ Dividends alone have not yet recovered your initial investment.")
-        shortfall = total_investment - final_cumulative_div_total
-        print(f"💸 Dividend shortfall: ${shortfall:.2f} ({shortfall/total_investment*100:.1f}% of initial investment)")
+        shortfall = final_investment - final_cumulative_divs
+        print(f"\n❌ Dividends alone have not yet recovered your total investment.")
+        print(f"💸 Dividend shortfall: ${shortfall:.2f} ({shortfall/final_investment*100:.1f}% of total investment)")
 
-    # Total return analysis
-    total_current_value = final_portfolio_value + final_cumulative_div_total
-    total_return = total_current_value - total_investment
-    return_pct = (total_return / total_investment) * 100
-
-    print(f"\n📈 Total Return Analysis:")
-    print(f"🎯 Total return: ${total_return:.2f} ({return_pct:+.1f}%)")
     if total_return > 0:
-        print(f"✅ Profitable investment!")
+        print(f"\n✅ Profitable investment!")
     else:
-        print(f"❌ Currently at a loss.")
-
+        print(f"\n❌ Currently at a loss.")
 
 if __name__ == "__main__":
     main() 
