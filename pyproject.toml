@@ -4,7 +4,10 @@ version = "0.1.1"
 description = "AI-powered CLI tool that screens stocks using technical and fundamental indicators."
 authors = ["Ilia Buleh <ilia.buleh@gmail.com>"]
 readme = "README.md"
-packages = [{ include = "ai_stock_screener", format = ["sdist", "wheel"] }]
+packages = [
+    { include = "ai_stock_screener", format = ["sdist", "wheel"] },
+    { include = "covered_call_analyzer", format = ["sdist", "wheel"] }
+]
 
 [tool.poetry.dependencies]
 python = ">=3.11"
@@ -19,10 +22,11 @@ pandas-ta = "^0.3.14b0"
 xgboost = "^3.0.2"
 joblib = "^1.5.1"
 fear-and-greed = "^0.4"
+matplotlib = "^3.10.3"
 
 [tool.poetry.scripts]
-# screener = "ai_stock_screener.cli:main"
 screener = "ai_stock_screener.cli:main"
+covered-call-div = "covered_call_analyzer.covered_call_analyzer:main"
 
 [build-system]
 requires = ["poetry-core"]
