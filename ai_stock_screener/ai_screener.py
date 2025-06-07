@@ -3,10 +3,13 @@ import pandas as pd
 import pandas_ta as ta
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from xgboost import XGBClassifier
 import joblib
 import numpy as np
 import sys
+import time
+from .output_formatter import *
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -21,11 +24,13 @@ FEATURE_COLUMNS = BASE_FEATURE_COLUMNS.copy()
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     try:
+        console.print("📈 Fetching S&P 500 constituent data...")
         table = pd.read_html(url)
         df = table[0]
+        console.print(f"✅ Found {len(df)} tickers in S&P 500")
         return df['Symbol'].tolist()
     except Exception as e:
-        print(f"Error fetching S&P 500 tickers: {e}")
+        console.print(f"❌ Error fetching S&P 500 tickers: {e}")
         return []
 
 def initialize_feature_columns(tickers, config):
@@ -40,18 +45,20 @@ def initialize_feature_columns(tickers, config):
 
 def fetch_data(ticker, config, is_market=False, spy_close=None):
     label_info = "(Market Data)" if is_market else ""
-    print(f"🔍 Fetching {ticker}... {label_info}")
+    if not is_market:
+        console.print(f"🔍 Fetching {ticker}... {label_info}")
+    
     stock = yf.Ticker(ticker)
     info = stock.info
     pe_ratio = info.get("trailingPE", None)
 
     if not is_market and (pe_ratio is None or pe_ratio > 1000):
-        print(f"❌ Skipped {ticker} due to missing or extreme P/E ratio.")
+        console.print(f"❌ Skipped {ticker} due to missing or extreme P/E ratio.")
         return None
 
     data = stock.history(period=config["period"])
     if data.empty:
-        print(f"❌ Skipped {ticker} (no price data available)")
+        console.print(f"❌ Skipped {ticker} (no price data available)")
         return None
 
     try:
@@ -106,27 +113,13 @@ def fetch_data(ticker, config, is_market=False, spy_close=None):
                 data["Sharpe_Like"] = data["Future_Return"] / (data["Volatility_Future"] + 1e-6)
                 data["Label"] = (data["Sharpe_Like"] > sharpe_threshold).astype(int)
 
-                valid_sharpe = data["Sharpe_Like"].dropna()
-                if not valid_sharpe.empty:
-                    total = len(valid_sharpe)
-                    accepted = (valid_sharpe > sharpe_threshold).sum()
-                    rejected = total - accepted
-                    print(f"{ticker} — return-volatility summary (threshold {sharpe_threshold}):")
-                    print(f"   • Accepted: {accepted} / {total} rows")
-                    print(f"   • Rejected: {rejected} rows")
-                    print(f"   • Mean: {valid_sharpe.mean():.2f}, Median: {valid_sharpe.median():.2f}, Max: {valid_sharpe.max():.2f}, Min: {valid_sharpe.min():.2f}")
+        if not is_market:
+            console.print(f"✅ Using {ticker} for training.")
 
-            label_counts = data["Label"].value_counts()
-            print(f"{ticker} — Label value counts:")
-            print(label_counts.to_string())
-        else:
-            print(f"{ticker} — Market indicators (no labels applied)")
-
-        print(f"{ticker} — Final usable rows after dropna: {len(data.dropna())}")
         return data.dropna()
 
     except Exception as e:
-        print(f"⚠️ Error computing indicators for {ticker}: {e}")
+        console.print(f"⚠️ Error computing indicators for {ticker}: {e}")
         return None
 
 def train_model(df, config):
@@ -134,12 +127,8 @@ def train_model(df, config):
     y = df["Label"]
     label_counts = y.value_counts().to_dict()
 
-    print("\n🧠 Training label distribution:")
-    print(f"   - 1 (high-growth): {label_counts.get(1, 0)} samples")
-    print(f"   - 0 (no significant growth): {label_counts.get(0, 0)} samples")
-
     if y.sum() == 0:
-        print("⚠️ Model training skipped — no high-growth (label=1) samples present.")
+        console.print("⚠️ Model training skipped — no high-growth (label=1) samples present.")
         return None
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -149,6 +138,7 @@ def train_model(df, config):
     model_type = config.get("model", "random_forest")
     grid_search = config.get("grid_search", 0)
     ensemble_runs = config.get("ensemble_runs", 1)
+    n_estimators = config.get("n_estimators", 100)
 
     def build_model(seed):
         if model_type == "xgboost":
@@ -176,15 +166,16 @@ def train_model(df, config):
             }
 
         if grid_search:
-            print(f"\n🔍 Performing grid search for {model_type}...")
             cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
             search = GridSearchCV(base_model, param_grid, cv=cv, scoring="accuracy", n_jobs=-1)
             search.fit(X_train, y_train)
-            print(f"✅ Best parameters found: {search.best_params_}")
+            
+            # Print grid search results
+            print_grid_search_results(search.best_params_, search.best_score_)
             return search.best_estimator_
         else:
             # Dynamically prepare only allowed parameters
-            override_params = {}
+            override_params = {"n_estimators": n_estimators}
             for param in param_grid:
                 if param in config:
                     override_params[param] = config[param]
@@ -194,7 +185,6 @@ def train_model(df, config):
             return base_model
 
     if ensemble_runs > 1:
-        print(f"\n🤖 Performing ensemble training with {ensemble_runs} runs...")
         models = []
         probs = []
         for i in range(ensemble_runs):
@@ -207,105 +197,107 @@ def train_model(df, config):
         avg_prob = np.mean(probs, axis=0)
         final_preds = (avg_prob > 0.5).astype(int)
         acc = (final_preds == y_test).mean()
-        print(f"\n✅ ENSEMBLE {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
         final_model = models[0]  # return one of the models for later use
     else:
         clf = build_model(config.get("seed", 42))
-        acc = clf.score(X_test, y_test)
-        print(f"\n✅ {model_type.upper()} accuracy on held-out test set: {acc:.2f}")
+        
+        # Calculate performance metrics
+        y_pred = clf.predict(X_test)
+        y_prob = clf.predict_proba(X_test)[:, 1]
+        
+        acc = accuracy_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred, zero_division=0)
+        recall = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        
+        # Print model performance
+        print_model_performance(acc, precision, recall, f1)
+        
         final_model = clf
 
     if config.get("save_model_path"):
         joblib.dump(final_model, config["save_model_path"])
-        print(f"💾 Saved model to {config['save_model_path']}")
 
     return final_model
 
-def run_screening(tickers, config):
-    print("\n📥 Starting screening process...\n")
-
+def run_screening(tickers, config, mode="eval"):
+    start_time = time.time()
+    
+    # Print beautiful header
+    print_header(mode, tickers, config)
+    
     initialize_feature_columns(tickers, config)
-
-    print("🧾 Feature summary before training:")
-    print(f"   ➤ Using {len(FEATURE_COLUMNS)} technical indicators:")
-    for feat in FEATURE_COLUMNS:
-        print(f"     • {feat}")
-    print()
+    
+    # Print model training start
+    model_type = config.get("model", "random_forest")
+    n_estimators = config.get("n_estimators", 100)
+    print_model_training_start(model_type, n_estimators, len(tickers))
 
     all_data = []
 
-    # Fetch SPY market context first (print-only or also for training)
+    # Fetch SPY market context first
     spy_df = fetch_data("SPY", config, is_market=True)
     spy_close_series = spy_df["Close"] if spy_df is not None else None
-    if spy_df is not None:
-        print(f"📊 SPY Market overview: RSI={spy_df.iloc[-1]['RSI']:.2f}, MACD={spy_df.iloc[-1]['MACD']:.2f}, ATR={spy_df.iloc[-1]['ATR']:.2f}")
-        if config.get("integrate_market"):
-            spy_df["Ticker"] = "SPY_MARKET"
-            spy_df["Label"] = 0  # Dummy label to keep shape
-            all_data.append(spy_df)
+    if spy_df is not None and config.get("integrate_market"):
+        spy_df["Ticker"] = "SPY_MARKET"
+        spy_df["Label"] = 0  # Dummy label to keep shape
+        all_data.append(spy_df)
+
+    # Collect stock info for company names
+    stock_infos = {}
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            stock_infos[ticker] = stock.info
+        except:
+            stock_infos[ticker] = {}
 
     for ticker in tickers:
         try:
             df = fetch_data(ticker, config, spy_close=spy_close_series)
             if df is not None:
-                print(f"✅ Using {ticker} for training.\n")
                 df["Ticker"] = ticker
                 all_data.append(df)
         except Exception as e:
-            print(f"❌ Error fetching data for {ticker}: {e}")
+            console.print(f"❌ Error fetching data for {ticker}: {e}")
 
     if not all_data:
-        print("\n❌ No usable data collected from tickers. Exiting.")
+        console.print("\n❌ No usable data collected from tickers. Exiting.")
         sys.exit(1)
 
     combined = pd.concat(all_data)
     combined = combined[combined["Ticker"] != "SPY_MARKET"] if not config.get("integrate_market") else combined
-    print(f"📦 Total training samples: {len(combined)} from {len(all_data)} sources")
-    print(combined.groupby('Ticker')["Label"].value_counts().to_string())
 
     clf = train_model(combined, config)
     if clf is None:
-        print("⚠️ Skipping prediction due to insufficient positive training data.")
+        console.print("⚠️ Skipping prediction due to insufficient positive training data.")
         return
 
-    print("\n📊 Predicted High-Growth Stocks Based on Latest Data:\n")
+    # Make predictions
     latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
     X_pred = latest[FEATURE_COLUMNS]
-    probs = clf.predict_proba(X_pred)
-    preds = clf.predict(X_pred)
-
-    results = []
-
-    for i, pred in enumerate(preds):
-        row = latest.iloc[i]
-        ticker = row["Ticker"]
-        prob = probs[i][1]
-
-        future_return = row.get("Future_Return", None)
-        volatility = row.get("Volatility_Future", None)
-        rv_score = (
-            future_return / (volatility + 1e-6)
-            if pd.notnull(future_return) and pd.notnull(volatility)
-            else None
-        )
-
-        summary = f"— Confidence: {prob:.2f}"
-        if pd.notnull(future_return) and pd.notnull(volatility):
-            summary += f" — return-volatility: {rv_score:.2f} (Return: {future_return*100:.2f}%, Volatility: {volatility*100:.2f}%)"
-
-        if pred == 1:
-            print(f"📈 {ticker}: Predicted to GROW > {config['threshold']*100:.1f}% in {config['future_days']} days {summary}")
-            results.append((ticker, prob, rv_score))
-        else:
-            print(f"📉 {ticker}: Predicted to NOT grow significantly {summary}")
-
-    if not results:
-        print("\n❌ No high-growth candidates identified.")
-        return
-
-    print("\n🎯 High-confidence candidates sorted by prediction certainty:")
-    for ticker, prob, rv_score in sorted(results, key=lambda x: x[1], reverse=True):
-        line = f"✅ {ticker} — Confidence: {prob:.2f}"
-        if rv_score is not None:
-            line += f", return-volatility: {rv_score:.2f}"
-        print(line)
+    probs = clf.predict_proba(X_pred)[:, 1]
+    
+    # Create results dataframe
+    results_df = create_results_dataframe(
+        latest["Ticker"].tolist(), 
+        probs, 
+        latest,
+        stock_infos
+    )
+    
+    # Filter for high probability results in discovery mode
+    if mode == "discovery":
+        results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
+        print_discovery_results(results_df, config)
+    else:
+        results_df = results_df.sort_values('Growth_Prob', ascending=False)
+        print_evaluation_results(results_df, config)
+    
+    # Print market context
+    print_market_context(spy_df, config.get("integrate_market", True))
+    
+    # Print completion stats
+    duration = time.time() - start_time
+    num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
+    print_completion_stats(duration, num_candidates)
