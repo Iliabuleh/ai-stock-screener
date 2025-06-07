@@ -4,11 +4,11 @@ import matplotlib.pyplot as plt
 import argparse
 
 def main():
-    """Main CLI entry point for YieldMax ETF analyzer."""
+    """Main CLI entry point for covered call ETF analyzer."""
     # Set up command line arguments
-    parser = argparse.ArgumentParser(description='Analyze YieldMax ETF dividend returns')
+    parser = argparse.ArgumentParser(description='Analyze covered call ETF dividend returns')
     parser.add_argument('--underlying', default='NVDA', help='Underlying stock ticker (default: NVDA)')
-    parser.add_argument('--etf', default='NVDY', help='YieldMax ETF ticker (default: NVDY)')
+    parser.add_argument('--etf', default='NVDY', help='Covered call ETF ticker (default: NVDY)')
     parser.add_argument('--investment', type=float, default=1000, help='Total investment amount in dollars (default: 1000)')
     parser.add_argument('--period', default='2y', help='Time period for analysis (default: 2y)')
     parser.add_argument('--start-date', help='Start date in YYYY-MM-DD format (overrides period)')

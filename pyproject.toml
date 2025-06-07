@@ -6,7 +6,7 @@ authors = ["Ilia Buleh <ilia.buleh@gmail.com>"]
 readme = "README.md"
 packages = [
     { include = "ai_stock_screener", format = ["sdist", "wheel"] },
-    { include = "yieldmax_analyzer", format = ["sdist", "wheel"] }
+    { include = "covered_call_analyzer", format = ["sdist", "wheel"] }
 ]
 
 [tool.poetry.dependencies]
@@ -26,7 +26,7 @@ matplotlib = "^3.10.3"
 
 [tool.poetry.scripts]
 screener = "ai_stock_screener.cli:main"
-yieldmax-div = "yieldmax_analyzer.yieldmax_analyzer:main"
+covered-call-div = "covered_call_analyzer.covered_call_analyzer:main"
 
 [build-system]
 requires = ["poetry-core"]
