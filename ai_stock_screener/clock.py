@@ -47,7 +47,7 @@ class MarketIntelligence:
         """Get human-readable regime context for predictions"""
         return f"{self.regime_description} (Confidence: {self.regime_confidence:.1%})"
 
-# 🏭 SECTOR MAPPINGS AND ETF TRACKING
+# 🏭 SECTOR ETF TRACKING
 SECTOR_ETFS = {
     "Technology": "XLK",
     "Healthcare": "XLV", 
@@ -60,66 +60,6 @@ SECTOR_ETFS = {
     "Utilities": "XLU",
     "Real Estate": "XLRE",
     "Materials": "XLB"
-}
-
-# 📊 Stock to Sector Mapping (Major stocks)
-STOCK_SECTOR_MAP = {
-    # Technology
-    "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology", "GOOG": "Technology",
-    "AMZN": "Technology", "NVDA": "Technology", "TSLA": "Technology", "META": "Technology",
-    "NFLX": "Technology", "CRM": "Technology", "ORCL": "Technology", "ADBE": "Technology",
-    "AVGO": "Technology", "TXN": "Technology", "QCOM": "Technology", "INTC": "Technology",
-    "AMD": "Technology", "PLTR": "Technology", "SNOW": "Technology", "MDB": "Technology",
-    
-    # Healthcare
-    "JNJ": "Healthcare", "UNH": "Healthcare", "PFE": "Healthcare", "ABBV": "Healthcare",
-    "TMO": "Healthcare", "ABT": "Healthcare", "LLY": "Healthcare", "MDT": "Healthcare",
-    "DHR": "Healthcare", "BMY": "Healthcare", "AMGN": "Healthcare", "GILD": "Healthcare",
-    
-    # Financials  
-    "JPM": "Financials", "BAC": "Financials", "WFC": "Financials", "GS": "Financials",
-    "MS": "Financials", "C": "Financials", "AXP": "Financials", "BLK": "Financials",
-    "SPGI": "Financials", "CME": "Financials", "ICE": "Financials", "COF": "Financials",
-    
-    # Consumer Discretionary
-    "AMZN": "Consumer Discretionary",  # Amazon is both tech and consumer
-    "TSLA": "Consumer Discretionary",  # Tesla is both tech and auto
-    "HD": "Consumer Discretionary", "MCD": "Consumer Discretionary", "NKE": "Consumer Discretionary",
-    "SBUX": "Consumer Discretionary", "TGT": "Consumer Discretionary", "LOW": "Consumer Discretionary",
-    
-    # Communication Services
-    "META": "Communication Services", "GOOGL": "Communication Services", "GOOG": "Communication Services",
-    "NFLX": "Communication Services", "DIS": "Communication Services", "CMCSA": "Communication Services",
-    "VZ": "Communication Services", "T": "Communication Services", "TMUS": "Communication Services",
-    
-    # Industrials
-    "BA": "Industrials", "CAT": "Industrials", "HON": "Industrials", "UNP": "Industrials",
-    "LMT": "Industrials", "RTX": "Industrials", "GE": "Industrials", "MMM": "Industrials",
-    "FDX": "Industrials", "UPS": "Industrials", "DE": "Industrials", "EMR": "Industrials",
-    
-    # Consumer Staples
-    "PG": "Consumer Staples", "KO": "Consumer Staples", "PEP": "Consumer Staples", "WMT": "Consumer Staples",
-    "COST": "Consumer Staples", "CL": "Consumer Staples", "KMB": "Consumer Staples", "GIS": "Consumer Staples",
-    
-    # Energy
-    "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "EOG": "Energy",
-    "SLB": "Energy", "PSX": "Energy", "VLO": "Energy", "MPC": "Energy",
-    
-    # Utilities
-    "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities", "D": "Utilities",
-    "AEP": "Utilities", "EXC": "Utilities", "XEL": "Utilities", "PEG": "Utilities",
-    
-    # Real Estate
-    "AMT": "Real Estate", "PLD": "Real Estate", "CCI": "Real Estate", "EQIX": "Real Estate",
-    "PSA": "Real Estate", "EXR": "Real Estate", "AVB": "Real Estate", "EQR": "Real Estate",
-    
-    # Materials
-    "LIN": "Materials", "APD": "Materials", "SHW": "Materials", "ECL": "Materials",
-    "FCX": "Materials", "NEM": "Materials", "DOW": "Materials", "DD": "Materials",
-    
-    # Special cases - popular stocks
-    "UBER": "Technology", "LYFT": "Technology", "SNAP": "Communication Services",
-    "PINS": "Communication Services", "ROKU": "Communication Services", "SPOT": "Communication Services"
 }
 
 @dataclass 
@@ -567,19 +507,64 @@ def market_clock():
     return intelligence
 
 def get_sector_for_stock(ticker: str) -> str:
-    """Get sector classification for a stock ticker"""
-    # Handle dual-sector stocks (Amazon, Tesla, etc.)
-    sector = STOCK_SECTOR_MAP.get(ticker.upper(), "Unknown")
+    """Get sector classification for a stock ticker using yfinance"""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        sector = info.get('sector', 'Unknown')
+        
+        # Normalize sector names to match our ETF mapping
+        if sector == 'Technology':
+            return 'Technology'
+        elif sector == 'Healthcare':
+            return 'Healthcare'
+        elif sector == 'Financial Services':
+            return 'Financials'
+        elif sector == 'Consumer Cyclical':
+            return 'Consumer Discretionary'
+        elif sector == 'Communication Services':
+            return 'Communication Services'
+        elif sector == 'Industrials':
+            return 'Industrials'
+        elif sector == 'Consumer Defensive':
+            return 'Consumer Staples'
+        elif sector == 'Energy':
+            return 'Energy'
+        elif sector == 'Utilities':
+            return 'Utilities'
+        elif sector == 'Real Estate':
+            return 'Real Estate'
+        elif sector == 'Basic Materials':
+            return 'Materials'
+        else:
+            return 'Unknown'
+            
+    except Exception as e:
+        print(f"⚠️ Could not fetch sector for {ticker}: {e}")
+        return "Unknown"
+
+def calculate_dynamic_sector_multiplier(sector_name: str, sector_intel: 'SectorIntelligence') -> float:
+    """Calculate dynamic sector adjustment based on actual performance"""
     
-    # For dual-sector stocks, prioritize based on market cap weightings
-    if ticker.upper() in ["AMZN"]:
-        return "Consumer Discretionary"  # Amazon's retail dominance
-    elif ticker.upper() in ["TSLA"]:
-        return "Consumer Discretionary"  # Tesla as auto company
-    elif ticker.upper() in ["META", "GOOGL", "GOOG"]:
-        return "Communication Services"  # Social media/advertising focus
+    # If we don't have sector performance data, no adjustment
+    sector_perf = sector_intel.sector_performances.get(sector_name)
+    if not sector_perf:
+        return 1.0
     
-    return sector
+    # Base multiplier on actual relative strength vs SPY
+    relative_strength = sector_perf.relative_strength_spy
+    
+    # Dynamic adjustment based on performance
+    if relative_strength > 3:
+        return 1.08  # Strong outperformance: +8%
+    elif relative_strength > 1:
+        return 1.04  # Moderate outperformance: +4%
+    elif relative_strength > -1:
+        return 1.0   # Neutral performance: no adjustment
+    elif relative_strength > -3:
+        return 0.96  # Moderate underperformance: -4%
+    else:
+        return 0.92  # Strong underperformance: -8%
 
 def fetch_sector_etf_data(sector_etf: str, period: str = "3mo") -> Optional[pd.DataFrame]:
     """Fetch sector ETF price data"""
@@ -598,20 +583,20 @@ def calculate_sector_performance(sector_name: str, sector_etf: str, spy_data: pd
     
     # Fetch sector ETF data
     sector_data = fetch_sector_etf_data(sector_etf)
-    if sector_data is None or len(sector_data) < 20:
+    if sector_data is None or len(sector_data) < 2:  # Need at least 2 data points
         return None
     
     try:
         current_price = sector_data['Close'].iloc[-1]
         
-        # Performance calculations
-        perf_1d = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-2]) - 1) * 100
+        # Performance calculations with safe indexing
+        perf_1d = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-2]) - 1) * 100 if len(sector_data) >= 2 else 0
         perf_5d = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-6]) - 1) * 100 if len(sector_data) >= 6 else 0
         perf_1m = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-21]) - 1) * 100 if len(sector_data) >= 21 else 0
         perf_3m = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-63]) - 1) * 100 if len(sector_data) >= 63 else 0
         
-        # Relative strength vs SPY (1 month)
-        if len(spy_data) >= 21 and len(sector_data) >= 21:
+        # Relative strength vs SPY (1 month) with proper null handling
+        if spy_data is not None and len(spy_data) >= 21 and len(sector_data) >= 21:
             spy_return_1m = ((spy_data['Close'].iloc[-1] / spy_data['Close'].iloc[-21]) - 1) * 100
             relative_strength = perf_1m - spy_return_1m
         else:
@@ -661,10 +646,14 @@ def analyze_sector_rotation(sector_performances: Dict[str, SectorPerformance]) -
     value_sectors = ["Financials", "Energy", "Materials", "Industrials"] 
     defensive_sectors = ["Utilities", "Consumer Staples", "Healthcare", "Real Estate"]
     
-    # Calculate average performance by category
-    growth_perf = sum([s.performance_1m for s in valid_sectors if s.sector_name in growth_sectors]) / len([s for s in valid_sectors if s.sector_name in growth_sectors]) if any(s.sector_name in growth_sectors for s in valid_sectors) else 0
-    value_perf = sum([s.performance_1m for s in valid_sectors if s.sector_name in value_sectors]) / len([s for s in valid_sectors if s.sector_name in value_sectors]) if any(s.sector_name in value_sectors for s in valid_sectors) else 0
-    defensive_perf = sum([s.performance_1m for s in valid_sectors if s.sector_name in defensive_sectors]) / len([s for s in valid_sectors if s.sector_name in defensive_sectors]) if any(s.sector_name in defensive_sectors for s in valid_sectors) else 0
+    # Calculate average performance by category with division by zero protection
+    growth_sector_list = [s for s in valid_sectors if s.sector_name in growth_sectors]
+    value_sector_list = [s for s in valid_sectors if s.sector_name in value_sectors]
+    defensive_sector_list = [s for s in valid_sectors if s.sector_name in defensive_sectors]
+    
+    growth_perf = sum([s.performance_1m for s in growth_sector_list]) / len(growth_sector_list) if growth_sector_list else 0
+    value_perf = sum([s.performance_1m for s in value_sector_list]) / len(value_sector_list) if value_sector_list else 0
+    defensive_perf = sum([s.performance_1m for s in defensive_sector_list]) / len(defensive_sector_list) if defensive_sector_list else 0
     
     # Determine rotation trend
     perf_diff_growth_value = growth_perf - value_perf
@@ -696,13 +685,17 @@ def get_sector_intelligence() -> SectorIntelligence:
     This is the main function to call for sector context
     """
     
-    # Get SPY data for relative strength calculations
+    # Get SPY data for relative strength calculations with better error handling
     spy_data = None
     try:
         spy = yf.Ticker("SPY")
         spy_data = spy.history(period="3mo")
-    except:
-        pass
+        if spy_data.empty:
+            print("⚠️ SPY data is empty, relative strength calculations may be limited")
+            spy_data = None
+    except Exception as e:
+        print(f"⚠️ Failed to fetch SPY data: {e}, relative strength calculations will be limited")
+        spy_data = None
     
     # Calculate performance for each sector
     sector_performances = {}

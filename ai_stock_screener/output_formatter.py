@@ -118,6 +118,39 @@ def print_discovery_results(results_df, config, market_intel=None, sector_intel=
             reason = get_analysis_reason(row)
             console.print(f"• {row['Ticker']} - {reason}")
 
+def print_probability_breakdown(results_df):
+    """Print detailed probability breakdown showing ML score vs boosts"""
+    console.print(f"\n🔍 PROBABILITY BREAKDOWN:")
+    
+    if results_df.empty:
+        console.print("No data to analyze.")
+        return
+    
+    for _, row in results_df.head(5).iterrows():  # Show top 5
+        ticker = row['Ticker']
+        raw_ml = row['Raw_ML_Score']
+        regime_boost = row['Regime_Boost'] 
+        sector_boost = row['Sector_Boost']
+        final_score = row['Growth_Prob']
+        
+        console.print(f"\n📊 {ticker} Analysis:")
+        console.print(f"├── 🤖 Base ML Score: {raw_ml:.1%}")
+        
+        if abs(regime_boost) > 0.01:  # Show if significant
+            regime_sign = "+" if regime_boost > 0 else ""
+            console.print(f"├── 🧠 Regime Adjustment: {regime_sign}{regime_boost:.1%}")
+        
+        if abs(sector_boost) > 0.01:  # Show if significant  
+            sector_sign = "+" if sector_boost > 0 else ""
+            console.print(f"├── 🏭 Sector Adjustment: {sector_sign}{sector_boost:.1%}")
+        
+        total_boost = regime_boost + sector_boost
+        if abs(total_boost) > 0.01:
+            boost_sign = "+" if total_boost > 0 else ""
+            console.print(f"├── ⚡ Total Boost: {boost_sign}{total_boost:.1%}")
+        
+        console.print(f"└── 🎯 Final Conviction: {final_score:.1%}")
+
 def print_evaluation_results(results_df, config, market_intel=None, sector_intel=None):
     """Print evaluation mode results with detailed analysis"""
     console.print(f"\n📈 DETAILED STOCK ANALYSIS:")
@@ -350,8 +383,8 @@ def get_recommendation_action(prob):
     else:
         return "Consider profit-taking if holding", "⚠️"
 
-def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, sector_explanations=None, market_intel=None, sector_intel=None):
-    """Create a properly formatted results dataframe"""
+def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, sector_explanations=None, market_intel=None, sector_intel=None, raw_probs=None, regime_probs=None):
+    """Create a properly formatted results dataframe with probability breakdown"""
     results = []
     
     for i, ticker in enumerate(tickers):
@@ -364,10 +397,24 @@ def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regi
         # Calculate volume change (mock for now, in real version would be calculated)
         vol_change = ((row_data.get('Volume', 1) / row_data.get('Volume_Avg', 1)) - 1) * 100 if hasattr(row_data, 'get') else 50
         
+        # Calculate probability breakdown
+        raw_score = raw_probs[i] if raw_probs is not None and i < len(raw_probs) else probs[i]
+        regime_score = regime_probs[i] if regime_probs is not None and i < len(regime_probs) else probs[i]
+        final_score = probs[i] if i < len(probs) else 0.5
+        
+        # Calculate boosts
+        regime_boost = regime_score - raw_score
+        sector_boost = final_score - regime_score
+        total_boost = final_score - raw_score
+        
         result = {
             'Ticker': ticker,
             'Company': stock_info.get('longName', ticker + ' Corp'),
-            'Growth_Prob': probs[i] if i < len(probs) else 0.5,
+            'Growth_Prob': final_score,
+            'Raw_ML_Score': raw_score,
+            'Regime_Boost': regime_boost,
+            'Sector_Boost': sector_boost,
+            'Total_Boost': total_boost,
             'RSI': row_data.get('RSI', 50) if hasattr(row_data, 'get') else 50,
             'Price': price,
             'Vol_Change': vol_change,
