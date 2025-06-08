@@ -10,7 +10,7 @@ import numpy as np
 import sys
 import time
 from .output_formatter import *
-from .clock import get_market_intelligence, MarketIntelligence
+from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence, calculate_dynamic_sector_multiplier
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -22,26 +22,53 @@ BASE_FEATURE_COLUMNS = [
 ]
 FEATURE_COLUMNS = BASE_FEATURE_COLUMNS.copy()
 
-# 🧠 Market regime adjustments for prediction confidence
-REGIME_MULTIPLIERS = {
-    "bull_low_vol": 1.15,      # Favorable for growth stocks
-    "bull_normal_vol": 1.05,   # Slightly favorable
-    "bull_high_vol": 0.95,     # Reduce confidence in volatile bull
-    "bear_low_vol": 0.85,      # Potential bottoming, but still cautious
-    "bear_normal_vol": 0.75,   # Bearish conditions
-    "bear_high_vol": 0.65,     # High risk environment
-    "sideways_low_vol": 0.90,  # Range-bound, moderate confidence
-    "sideways_normal_vol": 0.85, # Neutral conditions
-    "sideways_high_vol": 0.80  # Uncertain, volatile sideways
-}
+def calculate_dynamic_regime_multiplier(market_intel: MarketIntelligence) -> float:
+    """Calculate dynamic regime adjustment based on actual market conditions"""
+    
+    base_multiplier = 1.0
+    
+    # VIX-based volatility adjustment
+    vix_level = market_intel.vix_level
+    if vix_level and vix_level > 30:
+        base_multiplier *= 0.70  # High fear environment
+    elif vix_level and vix_level > 25:
+        base_multiplier *= 0.85  # Elevated volatility
+    elif vix_level and vix_level < 15:
+        base_multiplier *= 1.10  # Complacency/low vol boost
+    
+    # Trend strength adjustment
+    overextension = abs(market_intel.overextension_pct)
+    if overextension > 15:
+        base_multiplier *= 0.80  # Overextended markets are risky
+    elif overextension > 10:
+        base_multiplier *= 0.90  # Moderately overextended
+    elif overextension < 3:
+        base_multiplier *= 1.05  # Not overextended
+    
+    # Fear & Greed adjustment
+    if market_intel.fear_greed_value:
+        fg_value = market_intel.fear_greed_value
+        if fg_value > 80:  # Extreme greed
+            base_multiplier *= 0.85  # Contrarian reduction
+        elif fg_value > 60:  # Greed
+            base_multiplier *= 0.95  # Slight reduction
+        elif fg_value < 20:  # Extreme fear
+            base_multiplier *= 1.15  # Contrarian opportunity
+        elif fg_value < 40:  # Fear
+            base_multiplier *= 1.05  # Slight boost
+    
+    # Yield curve inversion penalty
+    if market_intel.yield_curve_spread and market_intel.yield_curve_spread < 0:
+        base_multiplier *= 0.75  # Recession risk
+    
+    return min(1.20, max(0.60, base_multiplier))  # Cap between 60%-120%
 
 def apply_regime_adjustment(probability: float, market_intel: MarketIntelligence) -> tuple[float, str]:
     """
     Apply market regime adjustment to prediction probability
     Returns: (adjusted_probability, explanation)
     """
-    regime_key = market_intel.current_regime.value
-    multiplier = REGIME_MULTIPLIERS.get(regime_key, 1.0)
+    multiplier = calculate_dynamic_regime_multiplier(market_intel)
     
     # Additional adjustments based on market conditions
     if market_intel.risk_appetite == "Risk-Off":
@@ -66,6 +93,52 @@ def apply_regime_adjustment(probability: float, market_intel: MarketIntelligence
         explanation = f"Boosted {confidence_change:+.1f}% for {regime_desc.lower()}"
     else:
         explanation = f"Reduced {confidence_change:.1f}% for {regime_desc.lower()}"
+    
+    return adjusted_prob, explanation
+
+def apply_sector_adjustment(probability: float, ticker: str, sector_intel: SectorIntelligence) -> tuple[float, str]:
+    """
+    Apply sector rotation adjustment to prediction probability using dynamic performance data
+    Returns: (adjusted_probability, explanation)
+    """
+    # Get stock's sector
+    stock_sector = get_sector_for_stock(ticker)
+    if stock_sector == "Unknown":
+        return probability, "No sector adjustment (unknown sector)"
+    
+    # Get dynamic multiplier based on actual performance
+    multiplier = calculate_dynamic_sector_multiplier(stock_sector, sector_intel)
+    
+    # Additional leading/lagging sector adjustment
+    if stock_sector in sector_intel.leading_sectors[:3]:  # Top 3 leading
+        multiplier *= 1.05  # Additional 5% boost for leading sectors
+        leader_boost = True
+    elif stock_sector in sector_intel.lagging_sectors[-3:]:  # Bottom 3 lagging  
+        multiplier *= 0.95  # Additional 5% penalty for lagging sectors
+        leader_boost = False
+    else:
+        leader_boost = None
+    
+    adjusted_prob = probability * multiplier  # No cap - conviction score approach
+    
+    # Create explanation
+    sector_perf = sector_intel.sector_performances.get(stock_sector)
+    explanations = []
+    
+    if sector_perf:
+        rel_strength = sector_perf.relative_strength_spy
+        if abs(rel_strength) > 1:
+            explanations.append(f"sector {rel_strength:+.1f}% vs SPY")
+    
+    if leader_boost is True:
+        explanations.append("leading sector boost")
+    elif leader_boost is False:
+        explanations.append("lagging sector penalty")
+    
+    if explanations:
+        explanation = f"{stock_sector}: {', '.join(explanations)}"
+    else:
+        explanation = f"Minimal sector adjustment for {stock_sector}"
     
     return adjusted_prob, explanation
 
@@ -275,8 +348,12 @@ def run_screening(tickers, config, mode="eval"):
     console.print("\n🧠 Gathering Market Intelligence...")
     market_intel = get_market_intelligence()
     
+    # 🏭 Get sector intelligence
+    console.print("🏭 Analyzing Sector Rotation...")
+    sector_intel = get_sector_intelligence()
+    
     # Print beautiful header with market context
-    print_header(mode, tickers, config, market_intel)
+    print_header(mode, tickers, config, market_intel, sector_intel)
     
     initialize_feature_columns(tickers, config)
     
@@ -333,36 +410,58 @@ def run_screening(tickers, config, mode="eval"):
     # 🧠 Apply market regime adjustments
     console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
     
-    adjusted_probs = []
+    regime_adjusted_probs = []
     regime_explanations = []
     
     for raw_prob in raw_probs:
         adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
-        adjusted_probs.append(adj_prob)
+        regime_adjusted_probs.append(adj_prob)
         regime_explanations.append(explanation)
     
-    # Create results dataframe with regime-adjusted probabilities
+    # 🏭 Apply sector adjustments
+    console.print(f"🏭 Applying {sector_intel.rotation_trend} sector adjustments...")
+    
+    final_probs = []
+    sector_explanations = []
+    
+    for i, ticker in enumerate(latest["Ticker"].tolist()):
+        regime_prob = regime_adjusted_probs[i]
+        sector_adj_prob, sector_explanation = apply_sector_adjustment(regime_prob, ticker, sector_intel)
+        final_probs.append(sector_adj_prob)
+        sector_explanations.append(sector_explanation)
+    
+    # Create results dataframe with detailed probability breakdown
     results_df = create_results_dataframe(
         latest["Ticker"].tolist(), 
-        adjusted_probs,  # Use regime-adjusted probabilities
+        final_probs,  # Final conviction scores
         latest,
         stock_infos,
-        regime_explanations=regime_explanations,  # Pass regime explanations
-        market_intel=market_intel  # Pass market intelligence
+        regime_explanations=regime_explanations,
+        sector_explanations=sector_explanations,
+        market_intel=market_intel,
+        sector_intel=sector_intel,
+        raw_probs=raw_probs,  # Add raw ML scores
+        regime_probs=regime_adjusted_probs  # Add regime-adjusted scores
     )
     
     # Filter for high probability results in discovery mode
     if mode == "discovery":
         results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
-        print_discovery_results(results_df, config, market_intel)
+        print_discovery_results(results_df, config, market_intel, sector_intel)
     else:
         results_df = results_df.sort_values('Growth_Prob', ascending=False)
-        print_evaluation_results(results_df, config, market_intel)
+        print_evaluation_results(results_df, config, market_intel, sector_intel)
+    
+    # Print probability breakdown for transparency
+    print_probability_breakdown(results_df)
     
     # Print enhanced market context
     print_enhanced_market_context(market_intel)
     
+    # Print sector intelligence
+    print_sector_intelligence(sector_intel)
+    
     # Print completion stats
     duration = time.time() - start_time
     num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
-    print_completion_stats(duration, num_candidates, market_intel)
+    print_completion_stats(duration, num_candidates, market_intel, sector_intel)
