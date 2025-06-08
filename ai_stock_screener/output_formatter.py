@@ -13,7 +13,7 @@ import time
 
 console = Console()
 
-def print_header(mode, tickers=None, config=None, market_intel=None):
+def print_header(mode, tickers=None, config=None, market_intel=None, sector_intel=None):
     """Print the main header with configuration"""
     if mode == "discovery":
         title = "🔍 AI Stock Screener - Discovery Mode"
@@ -34,6 +34,11 @@ def print_header(mode, tickers=None, config=None, market_intel=None):
     if market_intel:
         regime_text = f"\n🧠 Market Regime: {market_intel.current_regime.value.replace('_', ' ').title()} ({market_intel.regime_confidence:.0%} confidence)"
         config_text += regime_text
+    
+    # Add sector rotation context if available
+    if sector_intel:
+        sector_text = f"\n🏭 Sector Rotation: {sector_intel.rotation_trend} (Leading: {', '.join(sector_intel.leading_sectors[:2]) if len(sector_intel.leading_sectors) >= 2 else 'N/A'})"
+        config_text += sector_text
     
     console.print(Panel(f"[bold blue]{title}[/bold blue]\n{subtitle}\n\n{config_text}", 
                        title="AI Stock Screener", border_style="blue"))
@@ -61,7 +66,7 @@ def print_model_performance(accuracy, precision=None, recall=None, f1=None):
     if f1:
         console.print(f"F1-Score: {f1:.2f}")
 
-def print_discovery_results(results_df, config, market_intel=None):
+def print_discovery_results(results_df, config, market_intel=None, sector_intel=None):
     """Print discovery mode results with beautiful table"""
     console.print(f"\n📈 TOP GROWTH PREDICTIONS (Probability > 0.70):")
     
@@ -73,6 +78,7 @@ def print_discovery_results(results_df, config, market_intel=None):
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Ticker", style="cyan", no_wrap=True)
     table.add_column("Company", style="white")
+    table.add_column("Sector", style="blue", no_wrap=True)  # Add sector column
     table.add_column("Growth Prob", style="green", justify="right")
     table.add_column("RSI", style="yellow", justify="right")
     table.add_column("Price", style="white", justify="right")
@@ -87,9 +93,14 @@ def print_discovery_results(results_df, config, market_intel=None):
         vol_chg = f"+{row['Vol_Change']:.0f}%" if row['Vol_Change'] > 0 else f"{row['Vol_Change']:.0f}%"
         pe_ratio = f"{row['PE_Ratio']:.1f}" if pd.notnull(row['PE_Ratio']) else "N/A"
         
+        # Get sector for display
+        from .clock import get_sector_for_stock
+        sector = get_sector_for_stock(row['Ticker'])[:4]  # Abbreviated
+        
         table.add_row(
             row['Ticker'],
             row['Company'][:12] + "..." if len(str(row['Company'])) > 15 else str(row['Company']),
+            sector,
             prob,
             rsi,
             price,
@@ -107,7 +118,7 @@ def print_discovery_results(results_df, config, market_intel=None):
             reason = get_analysis_reason(row)
             console.print(f"• {row['Ticker']} - {reason}")
 
-def print_evaluation_results(results_df, config, market_intel=None):
+def print_evaluation_results(results_df, config, market_intel=None, sector_intel=None):
     """Print evaluation mode results with detailed analysis"""
     console.print(f"\n📈 DETAILED STOCK ANALYSIS:")
     
@@ -118,6 +129,7 @@ def print_evaluation_results(results_df, config, market_intel=None):
     # Create rich table
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Ticker", style="cyan", no_wrap=True)
+    table.add_column("Sector", style="blue", no_wrap=True)  # Add sector column
     table.add_column("Current Analysis", style="white", max_width=20)
     table.add_column("Prob", style="green", justify="right")
     table.add_column("RSI", style="yellow", justify="right")
@@ -135,8 +147,13 @@ def print_evaluation_results(results_df, config, market_intel=None):
         price = f"${row['Price']:.2f}" if pd.notnull(row['Price']) else "N/A"
         vol_chg = f"+{row['Vol_Change']:.0f}%" if row['Vol_Change'] > 0 else f"{row['Vol_Change']:.0f}%"
         
+        # Get sector for display
+        from .clock import get_sector_for_stock
+        sector = get_sector_for_stock(row['Ticker'])[:4]  # Abbreviated
+        
         table.add_row(
             row['Ticker'],
+            sector,
             analysis,
             prob,
             rsi,
@@ -229,13 +246,32 @@ def print_enhanced_market_context(market_intel):
     console.print(f"🎲 Risk Appetite: {market_intel.risk_appetite}")
     console.print(f"📊 Market Stress: {market_intel.market_stress_level}")
 
-def print_completion_stats(duration, num_candidates=None, market_intel=None):
+def print_sector_intelligence(sector_intel):
+    """Print sector intelligence and rotation analysis"""
+    console.print(f"\n🏭 SECTOR INTELLIGENCE:")
+    console.print(f"🎯 Rotation Trend: {sector_intel.rotation_trend}")
+    console.print(f"📊 Sector Breadth: {sector_intel.sector_breadth:.1%} sectors outperforming SPY")
+    console.print(f"🔥 Leading Sectors: {', '.join(sector_intel.leading_sectors)}")
+    console.print(f"❄️  Lagging Sectors: {', '.join(sector_intel.lagging_sectors)}")
+    
+    # Show top sector performances
+    valid_sectors = [s for s in sector_intel.sector_performances.values() if s is not None]
+    if valid_sectors:
+        console.print(f"\n📈 Sector Performance (1 Month):")
+        sorted_sectors = sorted(valid_sectors, key=lambda x: x.performance_1m, reverse=True)
+        for sector in sorted_sectors[:5]:  # Top 5
+            performance_emoji = "🟢" if sector.performance_1m > 0 else "🔴"
+            console.print(f"  {performance_emoji} {sector.sector_name}: {sector.performance_1m:+.1f}% (vs SPY: {sector.relative_strength_spy:+.1f}%)")
+
+def print_completion_stats(duration, num_candidates=None, market_intel=None, sector_intel=None):
     """Print completion statistics"""
     console.print(f"\n⏱️ Analysis completed in {duration:.1f} seconds")
     if num_candidates is not None:
         console.print(f"🎯 Found {num_candidates} high-probability candidates")
     if market_intel:
         console.print(f"🧠 Regime-adjusted predictions for {market_intel.current_regime.value.replace('_', ' ').title()} market")
+    if sector_intel:
+        console.print(f"🏭 Sector-adjusted for {sector_intel.rotation_trend} rotation")
 
 # Helper functions
 def get_analysis_reason(row):
@@ -314,7 +350,7 @@ def get_recommendation_action(prob):
     else:
         return "Consider profit-taking if holding", "⚠️"
 
-def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, market_intel=None):
+def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, sector_explanations=None, market_intel=None, sector_intel=None):
     """Create a properly formatted results dataframe"""
     results = []
     

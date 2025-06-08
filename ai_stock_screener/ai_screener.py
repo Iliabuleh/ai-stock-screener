@@ -10,7 +10,7 @@ import numpy as np
 import sys
 import time
 from .output_formatter import *
-from .clock import get_market_intelligence, MarketIntelligence
+from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -33,6 +33,55 @@ REGIME_MULTIPLIERS = {
     "sideways_low_vol": 0.90,  # Range-bound, moderate confidence
     "sideways_normal_vol": 0.85, # Neutral conditions
     "sideways_high_vol": 0.80  # Uncertain, volatile sideways
+}
+
+# 🏭 Sector rotation adjustments for prediction confidence
+SECTOR_MULTIPLIERS = {
+    # Sector rotation signals
+    "leading_sector": 1.10,      # +10% for leading sectors
+    "lagging_sector": 0.90,      # -10% for lagging sectors
+    "neutral_sector": 1.00,      # No adjustment
+    
+    # Rotation trend adjustments
+    "growth_rotation": {
+        "Technology": 1.08,
+        "Communication Services": 1.06,
+        "Consumer Discretionary": 1.04,
+        "Healthcare": 1.02,
+        "Financials": 0.98,
+        "Energy": 0.96,
+        "Materials": 0.96,
+        "Industrials": 1.00,
+        "Utilities": 0.94,
+        "Consumer Staples": 0.96,
+        "Real Estate": 0.98
+    },
+    "value_rotation": {
+        "Technology": 0.94,
+        "Communication Services": 0.96,
+        "Consumer Discretionary": 0.96,
+        "Healthcare": 0.98,
+        "Financials": 1.06,
+        "Energy": 1.08,
+        "Materials": 1.06,
+        "Industrials": 1.04,
+        "Utilities": 1.02,
+        "Consumer Staples": 1.02,
+        "Real Estate": 1.04
+    },
+    "defensive_rotation": {
+        "Technology": 0.92,
+        "Communication Services": 0.94,
+        "Consumer Discretionary": 0.94,
+        "Healthcare": 1.04,
+        "Financials": 0.96,
+        "Energy": 0.98,
+        "Materials": 0.96,
+        "Industrials": 0.98,
+        "Utilities": 1.08,
+        "Consumer Staples": 1.06,
+        "Real Estate": 1.04
+    }
 }
 
 def apply_regime_adjustment(probability: float, market_intel: MarketIntelligence) -> tuple[float, str]:
@@ -66,6 +115,57 @@ def apply_regime_adjustment(probability: float, market_intel: MarketIntelligence
         explanation = f"Boosted {confidence_change:+.1f}% for {regime_desc.lower()}"
     else:
         explanation = f"Reduced {confidence_change:.1f}% for {regime_desc.lower()}"
+    
+    return adjusted_prob, explanation
+
+def apply_sector_adjustment(probability: float, ticker: str, sector_intel: SectorIntelligence) -> tuple[float, str]:
+    """
+    Apply sector rotation adjustment to prediction probability
+    Returns: (adjusted_probability, explanation)
+    """
+    # Get stock's sector
+    stock_sector = get_sector_for_stock(ticker)
+    if stock_sector == "Unknown":
+        return probability, "No sector adjustment (unknown sector)"
+    
+    # Base multiplier
+    multiplier = 1.0
+    explanations = []
+    
+    # Leading/Lagging sector adjustment
+    if stock_sector in sector_intel.leading_sectors:
+        multiplier *= SECTOR_MULTIPLIERS["leading_sector"]
+        explanations.append(f"{stock_sector} is leading (+10%)")
+    elif stock_sector in sector_intel.lagging_sectors:
+        multiplier *= SECTOR_MULTIPLIERS["lagging_sector"]
+        explanations.append(f"{stock_sector} is lagging (-10%)")
+    
+    # Rotation trend adjustment
+    rotation_trend = sector_intel.rotation_trend.lower().replace(" ", "_")
+    if rotation_trend in SECTOR_MULTIPLIERS and stock_sector in SECTOR_MULTIPLIERS[rotation_trend]:
+        rotation_multiplier = SECTOR_MULTIPLIERS[rotation_trend][stock_sector]
+        if rotation_multiplier != 1.0:
+            multiplier *= rotation_multiplier
+            change_pct = (rotation_multiplier - 1) * 100
+            explanations.append(f"{sector_intel.rotation_trend} trend ({change_pct:+.0f}%)")
+    
+    # Apply sector performance boost/penalty based on relative strength
+    sector_perf = sector_intel.sector_performances.get(stock_sector)
+    if sector_perf and abs(sector_perf.relative_strength_spy) > 2:
+        if sector_perf.relative_strength_spy > 2:
+            multiplier *= 1.03  # +3% for strong outperformance
+            explanations.append(f"sector outperforming (+3%)")
+        elif sector_perf.relative_strength_spy < -2:
+            multiplier *= 0.97  # -3% for underperformance
+            explanations.append(f"sector underperforming (-3%)")
+    
+    adjusted_prob = probability * multiplier
+    
+    # Create explanation
+    if not explanations:
+        explanation = f"Minimal sector adjustment for {stock_sector}"
+    else:
+        explanation = f"{stock_sector}: {', '.join(explanations)}"
     
     return adjusted_prob, explanation
 
@@ -275,8 +375,12 @@ def run_screening(tickers, config, mode="eval"):
     console.print("\n🧠 Gathering Market Intelligence...")
     market_intel = get_market_intelligence()
     
+    # 🏭 Get sector intelligence
+    console.print("🏭 Analyzing Sector Rotation...")
+    sector_intel = get_sector_intelligence()
+    
     # Print beautiful header with market context
-    print_header(mode, tickers, config, market_intel)
+    print_header(mode, tickers, config, market_intel, sector_intel)
     
     initialize_feature_columns(tickers, config)
     
@@ -333,36 +437,53 @@ def run_screening(tickers, config, mode="eval"):
     # 🧠 Apply market regime adjustments
     console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
     
-    adjusted_probs = []
+    regime_adjusted_probs = []
     regime_explanations = []
     
     for raw_prob in raw_probs:
         adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
-        adjusted_probs.append(adj_prob)
+        regime_adjusted_probs.append(adj_prob)
         regime_explanations.append(explanation)
     
-    # Create results dataframe with regime-adjusted probabilities
+    # 🏭 Apply sector adjustments
+    console.print(f"🏭 Applying {sector_intel.rotation_trend} sector adjustments...")
+    
+    final_probs = []
+    sector_explanations = []
+    
+    for i, ticker in enumerate(latest["Ticker"].tolist()):
+        regime_prob = regime_adjusted_probs[i]
+        sector_adj_prob, sector_explanation = apply_sector_adjustment(regime_prob, ticker, sector_intel)
+        final_probs.append(sector_adj_prob)
+        sector_explanations.append(sector_explanation)
+    
+    # Create results dataframe with regime + sector adjusted probabilities
     results_df = create_results_dataframe(
         latest["Ticker"].tolist(), 
-        adjusted_probs,  # Use regime-adjusted probabilities
+        final_probs,  # Use regime + sector adjusted probabilities
         latest,
         stock_infos,
-        regime_explanations=regime_explanations,  # Pass regime explanations
-        market_intel=market_intel  # Pass market intelligence
+        regime_explanations=regime_explanations,
+        sector_explanations=sector_explanations,  # Pass sector explanations
+        market_intel=market_intel,
+        sector_intel=sector_intel  # Pass sector intelligence
     )
     
     # Filter for high probability results in discovery mode
     if mode == "discovery":
         results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
-        print_discovery_results(results_df, config, market_intel)
+        print_discovery_results(results_df, config, market_intel, sector_intel)
     else:
         results_df = results_df.sort_values('Growth_Prob', ascending=False)
-        print_evaluation_results(results_df, config, market_intel)
+        print_evaluation_results(results_df, config, market_intel, sector_intel)
     
     # Print enhanced market context
     print_enhanced_market_context(market_intel)
     
+    # Print sector intelligence
+    print_sector_intelligence(sector_intel)
+    
     # Print completion stats
     duration = time.time() - start_time
     num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
-    print_completion_stats(duration, num_candidates, market_intel)
+    print_completion_stats(duration, num_candidates, market_intel, sector_intel)

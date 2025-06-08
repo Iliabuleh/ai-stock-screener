@@ -3,6 +3,7 @@ import fear_and_greed as fg
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from enum import Enum
+import pandas as pd
 
 class MarketRegime(Enum):
     """Market regime classifications for model selection"""
@@ -45,6 +46,106 @@ class MarketIntelligence:
     def get_regime_context(self) -> str:
         """Get human-readable regime context for predictions"""
         return f"{self.regime_description} (Confidence: {self.regime_confidence:.1%})"
+
+# 🏭 SECTOR MAPPINGS AND ETF TRACKING
+SECTOR_ETFS = {
+    "Technology": "XLK",
+    "Healthcare": "XLV", 
+    "Financials": "XLF",
+    "Consumer Discretionary": "XLY",
+    "Communication Services": "XLC",
+    "Industrials": "XLI",
+    "Consumer Staples": "XLP",
+    "Energy": "XLE",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Materials": "XLB"
+}
+
+# 📊 Stock to Sector Mapping (Major stocks)
+STOCK_SECTOR_MAP = {
+    # Technology
+    "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology", "GOOG": "Technology",
+    "AMZN": "Technology", "NVDA": "Technology", "TSLA": "Technology", "META": "Technology",
+    "NFLX": "Technology", "CRM": "Technology", "ORCL": "Technology", "ADBE": "Technology",
+    "AVGO": "Technology", "TXN": "Technology", "QCOM": "Technology", "INTC": "Technology",
+    "AMD": "Technology", "PLTR": "Technology", "SNOW": "Technology", "MDB": "Technology",
+    
+    # Healthcare
+    "JNJ": "Healthcare", "UNH": "Healthcare", "PFE": "Healthcare", "ABBV": "Healthcare",
+    "TMO": "Healthcare", "ABT": "Healthcare", "LLY": "Healthcare", "MDT": "Healthcare",
+    "DHR": "Healthcare", "BMY": "Healthcare", "AMGN": "Healthcare", "GILD": "Healthcare",
+    
+    # Financials  
+    "JPM": "Financials", "BAC": "Financials", "WFC": "Financials", "GS": "Financials",
+    "MS": "Financials", "C": "Financials", "AXP": "Financials", "BLK": "Financials",
+    "SPGI": "Financials", "CME": "Financials", "ICE": "Financials", "COF": "Financials",
+    
+    # Consumer Discretionary
+    "AMZN": "Consumer Discretionary",  # Amazon is both tech and consumer
+    "TSLA": "Consumer Discretionary",  # Tesla is both tech and auto
+    "HD": "Consumer Discretionary", "MCD": "Consumer Discretionary", "NKE": "Consumer Discretionary",
+    "SBUX": "Consumer Discretionary", "TGT": "Consumer Discretionary", "LOW": "Consumer Discretionary",
+    
+    # Communication Services
+    "META": "Communication Services", "GOOGL": "Communication Services", "GOOG": "Communication Services",
+    "NFLX": "Communication Services", "DIS": "Communication Services", "CMCSA": "Communication Services",
+    "VZ": "Communication Services", "T": "Communication Services", "TMUS": "Communication Services",
+    
+    # Industrials
+    "BA": "Industrials", "CAT": "Industrials", "HON": "Industrials", "UNP": "Industrials",
+    "LMT": "Industrials", "RTX": "Industrials", "GE": "Industrials", "MMM": "Industrials",
+    "FDX": "Industrials", "UPS": "Industrials", "DE": "Industrials", "EMR": "Industrials",
+    
+    # Consumer Staples
+    "PG": "Consumer Staples", "KO": "Consumer Staples", "PEP": "Consumer Staples", "WMT": "Consumer Staples",
+    "COST": "Consumer Staples", "CL": "Consumer Staples", "KMB": "Consumer Staples", "GIS": "Consumer Staples",
+    
+    # Energy
+    "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "EOG": "Energy",
+    "SLB": "Energy", "PSX": "Energy", "VLO": "Energy", "MPC": "Energy",
+    
+    # Utilities
+    "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities", "D": "Utilities",
+    "AEP": "Utilities", "EXC": "Utilities", "XEL": "Utilities", "PEG": "Utilities",
+    
+    # Real Estate
+    "AMT": "Real Estate", "PLD": "Real Estate", "CCI": "Real Estate", "EQIX": "Real Estate",
+    "PSA": "Real Estate", "EXR": "Real Estate", "AVB": "Real Estate", "EQR": "Real Estate",
+    
+    # Materials
+    "LIN": "Materials", "APD": "Materials", "SHW": "Materials", "ECL": "Materials",
+    "FCX": "Materials", "NEM": "Materials", "DOW": "Materials", "DD": "Materials",
+    
+    # Special cases - popular stocks
+    "UBER": "Technology", "LYFT": "Technology", "SNAP": "Communication Services",
+    "PINS": "Communication Services", "ROKU": "Communication Services", "SPOT": "Communication Services"
+}
+
+@dataclass 
+class SectorPerformance:
+    """Individual sector performance metrics"""
+    sector_name: str
+    sector_etf: str
+    current_price: float
+    performance_1d: float
+    performance_5d: float
+    performance_1m: float
+    performance_3m: float
+    relative_strength_spy: float  # vs SPY over 1 month
+    momentum_score: float  # Combined momentum indicator
+    rotation_signal: str  # "Inflow", "Outflow", "Neutral"
+
+@dataclass
+class SectorIntelligence:
+    """Comprehensive sector analysis and rotation intelligence"""
+    sector_performances: Dict[str, SectorPerformance]
+    leading_sectors: List[str]  # Top 3 performing sectors
+    lagging_sectors: List[str]  # Bottom 3 performing sectors
+    rotation_trend: str  # "Growth to Value", "Value to Growth", "Defensive Rotation", "Risk-On", "Neutral"
+    rotation_strength: float  # 0-1 confidence in rotation signal
+    sector_breadth: float  # % of sectors outperforming SPY
+    cross_sector_correlation: float  # Average correlation between sectors (diversification indicator)
 
 def get_spy_trend():
     # Load 18 months of SPY data for long-term SMA calculation
@@ -464,3 +565,180 @@ def market_clock():
     print()
     
     return intelligence
+
+def get_sector_for_stock(ticker: str) -> str:
+    """Get sector classification for a stock ticker"""
+    # Handle dual-sector stocks (Amazon, Tesla, etc.)
+    sector = STOCK_SECTOR_MAP.get(ticker.upper(), "Unknown")
+    
+    # For dual-sector stocks, prioritize based on market cap weightings
+    if ticker.upper() in ["AMZN"]:
+        return "Consumer Discretionary"  # Amazon's retail dominance
+    elif ticker.upper() in ["TSLA"]:
+        return "Consumer Discretionary"  # Tesla as auto company
+    elif ticker.upper() in ["META", "GOOGL", "GOOG"]:
+        return "Communication Services"  # Social media/advertising focus
+    
+    return sector
+
+def fetch_sector_etf_data(sector_etf: str, period: str = "3mo") -> Optional[pd.DataFrame]:
+    """Fetch sector ETF price data"""
+    try:
+        etf = yf.Ticker(sector_etf)
+        data = etf.history(period=period)
+        if data.empty:
+            return None
+        return data
+    except Exception as e:
+        print(f"⚠️ Error fetching {sector_etf}: {e}")
+        return None
+
+def calculate_sector_performance(sector_name: str, sector_etf: str, spy_data: pd.DataFrame) -> Optional[SectorPerformance]:
+    """Calculate comprehensive sector performance metrics"""
+    
+    # Fetch sector ETF data
+    sector_data = fetch_sector_etf_data(sector_etf)
+    if sector_data is None or len(sector_data) < 20:
+        return None
+    
+    try:
+        current_price = sector_data['Close'].iloc[-1]
+        
+        # Performance calculations
+        perf_1d = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-2]) - 1) * 100
+        perf_5d = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-6]) - 1) * 100 if len(sector_data) >= 6 else 0
+        perf_1m = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-21]) - 1) * 100 if len(sector_data) >= 21 else 0
+        perf_3m = ((sector_data['Close'].iloc[-1] / sector_data['Close'].iloc[-63]) - 1) * 100 if len(sector_data) >= 63 else 0
+        
+        # Relative strength vs SPY (1 month)
+        if len(spy_data) >= 21 and len(sector_data) >= 21:
+            spy_return_1m = ((spy_data['Close'].iloc[-1] / spy_data['Close'].iloc[-21]) - 1) * 100
+            relative_strength = perf_1m - spy_return_1m
+        else:
+            relative_strength = 0
+            
+        # Momentum Score (weighted average of timeframes)
+        momentum_score = (perf_1d * 0.1 + perf_5d * 0.2 + perf_1m * 0.4 + perf_3m * 0.3)
+        
+        # Rotation Signal based on recent performance
+        if perf_5d > 2 and relative_strength > 1:
+            rotation_signal = "Inflow"
+        elif perf_5d < -2 and relative_strength < -1:
+            rotation_signal = "Outflow"  
+        else:
+            rotation_signal = "Neutral"
+            
+        return SectorPerformance(
+            sector_name=sector_name,
+            sector_etf=sector_etf,
+            current_price=current_price,
+            performance_1d=perf_1d,
+            performance_5d=perf_5d,
+            performance_1m=perf_1m,
+            performance_3m=perf_3m,
+            relative_strength_spy=relative_strength,
+            momentum_score=momentum_score,
+            rotation_signal=rotation_signal
+        )
+        
+    except Exception as e:
+        print(f"⚠️ Error calculating performance for {sector_name}: {e}")
+        return None
+
+def analyze_sector_rotation(sector_performances: Dict[str, SectorPerformance]) -> tuple[str, float]:
+    """Analyze overall sector rotation patterns"""
+    
+    if not sector_performances:
+        return "Neutral", 0.0
+    
+    # Get valid performances
+    valid_sectors = [s for s in sector_performances.values() if s is not None]
+    if len(valid_sectors) < 5:
+        return "Neutral", 0.0
+    
+    # Classify sector types for rotation analysis
+    growth_sectors = ["Technology", "Communication Services", "Consumer Discretionary"]
+    value_sectors = ["Financials", "Energy", "Materials", "Industrials"] 
+    defensive_sectors = ["Utilities", "Consumer Staples", "Healthcare", "Real Estate"]
+    
+    # Calculate average performance by category
+    growth_perf = sum([s.performance_1m for s in valid_sectors if s.sector_name in growth_sectors]) / len([s for s in valid_sectors if s.sector_name in growth_sectors]) if any(s.sector_name in growth_sectors for s in valid_sectors) else 0
+    value_perf = sum([s.performance_1m for s in valid_sectors if s.sector_name in value_sectors]) / len([s for s in valid_sectors if s.sector_name in value_sectors]) if any(s.sector_name in value_sectors for s in valid_sectors) else 0
+    defensive_perf = sum([s.performance_1m for s in valid_sectors if s.sector_name in defensive_sectors]) / len([s for s in valid_sectors if s.sector_name in defensive_sectors]) if any(s.sector_name in defensive_sectors for s in valid_sectors) else 0
+    
+    # Determine rotation trend
+    perf_diff_growth_value = growth_perf - value_perf
+    perf_diff_growth_defensive = growth_perf - defensive_perf
+    perf_diff_value_defensive = value_perf - defensive_perf
+    
+    # Rotation logic
+    if perf_diff_growth_value > 3:
+        rotation_trend = "Growth Rotation"
+        strength = min(1.0, abs(perf_diff_growth_value) / 10)
+    elif perf_diff_growth_value < -3:
+        rotation_trend = "Value Rotation"  
+        strength = min(1.0, abs(perf_diff_growth_value) / 10)
+    elif defensive_perf > max(growth_perf, value_perf) + 2:
+        rotation_trend = "Defensive Rotation"
+        strength = min(1.0, abs(perf_diff_growth_defensive) / 8)
+    elif growth_perf > defensive_perf + 2 and value_perf > defensive_perf + 2:
+        rotation_trend = "Risk-On"
+        strength = min(1.0, (perf_diff_growth_defensive + perf_diff_value_defensive) / 16)
+    else:
+        rotation_trend = "Neutral"
+        strength = 0.0
+        
+    return rotation_trend, strength
+
+def get_sector_intelligence() -> SectorIntelligence:
+    """
+    Get comprehensive sector intelligence for sector-aware predictions
+    This is the main function to call for sector context
+    """
+    
+    # Get SPY data for relative strength calculations
+    spy_data = None
+    try:
+        spy = yf.Ticker("SPY")
+        spy_data = spy.history(period="3mo")
+    except:
+        pass
+    
+    # Calculate performance for each sector
+    sector_performances = {}
+    
+    for sector_name, sector_etf in SECTOR_ETFS.items():
+        perf = calculate_sector_performance(sector_name, sector_etf, spy_data)
+        if perf is not None:
+            sector_performances[sector_name] = perf
+    
+    # Find leading and lagging sectors
+    valid_sectors = [s for s in sector_performances.values() if s is not None]
+    if valid_sectors:
+        sorted_by_momentum = sorted(valid_sectors, key=lambda x: x.momentum_score, reverse=True)
+        leading_sectors = [s.sector_name for s in sorted_by_momentum[:3]]
+        lagging_sectors = [s.sector_name for s in sorted_by_momentum[-3:]]
+    else:
+        leading_sectors = []
+        lagging_sectors = []
+    
+    # Analyze rotation trends
+    rotation_trend, rotation_strength = analyze_sector_rotation(sector_performances)
+    
+    # Calculate sector breadth (% outperforming SPY)
+    outperforming_count = sum(1 for s in valid_sectors if s.relative_strength_spy > 0)
+    sector_breadth = outperforming_count / len(valid_sectors) if valid_sectors else 0.5
+    
+    # Simple correlation proxy (lower is better for diversification)
+    # In a real implementation, would calculate actual correlations
+    cross_sector_correlation = 0.6 if sector_breadth > 0.7 else 0.4 if sector_breadth < 0.3 else 0.5
+    
+    return SectorIntelligence(
+        sector_performances=sector_performances,
+        leading_sectors=leading_sectors,
+        lagging_sectors=lagging_sectors, 
+        rotation_trend=rotation_trend,
+        rotation_strength=rotation_strength,
+        sector_breadth=sector_breadth,
+        cross_sector_correlation=cross_sector_correlation
+    )
