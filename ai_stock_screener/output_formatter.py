@@ -13,7 +13,7 @@ import time
 
 console = Console()
 
-def print_header(mode, tickers=None, config=None):
+def print_header(mode, tickers=None, config=None, market_intel=None):
     """Print the main header with configuration"""
     if mode == "discovery":
         title = "🔍 AI Stock Screener - Discovery Mode"
@@ -29,6 +29,11 @@ def print_header(mode, tickers=None, config=None):
     threshold = config.get('threshold', 0.0)
     
     config_text = f"📅 Using {period} historical data, predicting {future_days} days ahead\n🎯 Growth threshold: {threshold*100:.1f}%"
+    
+    # Add market regime context if available
+    if market_intel:
+        regime_text = f"\n🧠 Market Regime: {market_intel.current_regime.value.replace('_', ' ').title()} ({market_intel.regime_confidence:.0%} confidence)"
+        config_text += regime_text
     
     console.print(Panel(f"[bold blue]{title}[/bold blue]\n{subtitle}\n\n{config_text}", 
                        title="AI Stock Screener", border_style="blue"))
@@ -56,7 +61,7 @@ def print_model_performance(accuracy, precision=None, recall=None, f1=None):
     if f1:
         console.print(f"F1-Score: {f1:.2f}")
 
-def print_discovery_results(results_df, config):
+def print_discovery_results(results_df, config, market_intel=None):
     """Print discovery mode results with beautiful table"""
     console.print(f"\n📈 TOP GROWTH PREDICTIONS (Probability > 0.70):")
     
@@ -102,7 +107,7 @@ def print_discovery_results(results_df, config):
             reason = get_analysis_reason(row)
             console.print(f"• {row['Ticker']} - {reason}")
 
-def print_evaluation_results(results_df, config):
+def print_evaluation_results(results_df, config, market_intel=None):
     """Print evaluation mode results with detailed analysis"""
     console.print(f"\n📈 DETAILED STOCK ANALYSIS:")
     
@@ -215,12 +220,22 @@ def print_market_context(spy_data=None, integration_enabled=True):
     
     console.print(f"Market Integration: {'ENABLED' if integration_enabled else 'DISABLED'}")
 
-def print_completion_stats(duration, num_candidates=None):
+def print_enhanced_market_context(market_intel):
+    """Print enhanced market context with regime analysis"""
+    console.print(f"\n🌍 MARKET INTELLIGENCE:")
+    console.print(f"🏛️  Current Regime: {market_intel.current_regime.value.replace('_', ' ').title()}")
+    console.print(f"🎯 Confidence: {market_intel.regime_confidence:.1%}")
+    console.print(f"📝 Assessment: {market_intel.regime_description}")
+    console.print(f"🎲 Risk Appetite: {market_intel.risk_appetite}")
+    console.print(f"📊 Market Stress: {market_intel.market_stress_level}")
+
+def print_completion_stats(duration, num_candidates=None, market_intel=None):
     """Print completion statistics"""
     console.print(f"\n⏱️ Analysis completed in {duration:.1f} seconds")
-    if num_candidates:
-        console.print(f"✅ Scan complete! {num_candidates} high-probability growth candidates identified.")
-    console.print(f"🎯 Next update recommended: Check back in 2-3 trading days")
+    if num_candidates is not None:
+        console.print(f"🎯 Found {num_candidates} high-probability candidates")
+    if market_intel:
+        console.print(f"🧠 Regime-adjusted predictions for {market_intel.current_regime.value.replace('_', ' ').title()} market")
 
 # Helper functions
 def get_analysis_reason(row):
@@ -299,7 +314,7 @@ def get_recommendation_action(prob):
     else:
         return "Consider profit-taking if holding", "⚠️"
 
-def create_results_dataframe(tickers, probs, latest_data, stock_infos=None):
+def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, market_intel=None):
     """Create a properly formatted results dataframe"""
     results = []
     

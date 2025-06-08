@@ -10,6 +10,7 @@ import numpy as np
 import sys
 import time
 from .output_formatter import *
+from .clock import get_market_intelligence, MarketIntelligence
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -20,6 +21,53 @@ BASE_FEATURE_COLUMNS = [
     "Price_vs_SMA50", "Price_vs_SMA200", "Rel_Strength_SPY"
 ]
 FEATURE_COLUMNS = BASE_FEATURE_COLUMNS.copy()
+
+# 🧠 Market regime adjustments for prediction confidence
+REGIME_MULTIPLIERS = {
+    "bull_low_vol": 1.15,      # Favorable for growth stocks
+    "bull_normal_vol": 1.05,   # Slightly favorable
+    "bull_high_vol": 0.95,     # Reduce confidence in volatile bull
+    "bear_low_vol": 0.85,      # Potential bottoming, but still cautious
+    "bear_normal_vol": 0.75,   # Bearish conditions
+    "bear_high_vol": 0.65,     # High risk environment
+    "sideways_low_vol": 0.90,  # Range-bound, moderate confidence
+    "sideways_normal_vol": 0.85, # Neutral conditions
+    "sideways_high_vol": 0.80  # Uncertain, volatile sideways
+}
+
+def apply_regime_adjustment(probability: float, market_intel: MarketIntelligence) -> tuple[float, str]:
+    """
+    Apply market regime adjustment to prediction probability
+    Returns: (adjusted_probability, explanation)
+    """
+    regime_key = market_intel.current_regime.value
+    multiplier = REGIME_MULTIPLIERS.get(regime_key, 1.0)
+    
+    # Additional adjustments based on market conditions
+    if market_intel.risk_appetite == "Risk-Off":
+        multiplier *= 0.9  # Reduce confidence in risk-off environment
+    elif market_intel.risk_appetite == "Risk-On":
+        multiplier *= 1.05  # Slight boost in risk-on environment
+    
+    if market_intel.market_stress_level == "High":
+        multiplier *= 0.85  # Significantly reduce confidence in high stress
+    elif market_intel.market_stress_level == "Low":
+        multiplier *= 1.05  # Slight boost in low stress environment
+    
+    adjusted_prob = min(0.95, probability * multiplier)  # Cap at 95%
+    
+    # Create explanation
+    regime_desc = market_intel.regime_description
+    confidence_change = ((adjusted_prob - probability) / probability) * 100 if probability > 0 else 0
+    
+    if abs(confidence_change) < 1:
+        explanation = f"Minimal adjustment for {regime_desc.lower()}"
+    elif confidence_change > 0:
+        explanation = f"Boosted {confidence_change:+.1f}% for {regime_desc.lower()}"
+    else:
+        explanation = f"Reduced {confidence_change:.1f}% for {regime_desc.lower()}"
+    
+    return adjusted_prob, explanation
 
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -223,8 +271,12 @@ def train_model(df, config):
 def run_screening(tickers, config, mode="eval"):
     start_time = time.time()
     
-    # Print beautiful header
-    print_header(mode, tickers, config)
+    # 🧠 Get market intelligence first
+    console.print("\n🧠 Gathering Market Intelligence...")
+    market_intel = get_market_intelligence()
+    
+    # Print beautiful header with market context
+    print_header(mode, tickers, config, market_intel)
     
     initialize_feature_columns(tickers, config)
     
@@ -276,28 +328,41 @@ def run_screening(tickers, config, mode="eval"):
     # Make predictions
     latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
     X_pred = latest[FEATURE_COLUMNS]
-    probs = clf.predict_proba(X_pred)[:, 1]
+    raw_probs = clf.predict_proba(X_pred)[:, 1]
     
-    # Create results dataframe
+    # 🧠 Apply market regime adjustments
+    console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
+    
+    adjusted_probs = []
+    regime_explanations = []
+    
+    for raw_prob in raw_probs:
+        adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
+        adjusted_probs.append(adj_prob)
+        regime_explanations.append(explanation)
+    
+    # Create results dataframe with regime-adjusted probabilities
     results_df = create_results_dataframe(
         latest["Ticker"].tolist(), 
-        probs, 
+        adjusted_probs,  # Use regime-adjusted probabilities
         latest,
-        stock_infos
+        stock_infos,
+        regime_explanations=regime_explanations,  # Pass regime explanations
+        market_intel=market_intel  # Pass market intelligence
     )
     
     # Filter for high probability results in discovery mode
     if mode == "discovery":
         results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
-        print_discovery_results(results_df, config)
+        print_discovery_results(results_df, config, market_intel)
     else:
         results_df = results_df.sort_values('Growth_Prob', ascending=False)
-        print_evaluation_results(results_df, config)
+        print_evaluation_results(results_df, config, market_intel)
     
-    # Print market context
-    print_market_context(spy_df, config.get("integrate_market", True))
+    # Print enhanced market context
+    print_enhanced_market_context(market_intel)
     
     # Print completion stats
     duration = time.time() - start_time
     num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
-    print_completion_stats(duration, num_candidates)
+    print_completion_stats(duration, num_candidates, market_intel)
