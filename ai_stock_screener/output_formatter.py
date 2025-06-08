@@ -119,37 +119,75 @@ def print_discovery_results(results_df, config, market_intel=None, sector_intel=
             console.print(f"• {row['Ticker']} - {reason}")
 
 def print_probability_breakdown(results_df):
-    """Print detailed probability breakdown showing ML score vs boosts"""
-    console.print(f"\n🔍 PROBABILITY BREAKDOWN:")
+    """Print detailed probability breakdown showing ML, regime, sector, and news components"""
+    console.print("\n🔍 PROBABILITY BREAKDOWN:")
+    console.print("="*80)
+    console.print(f"{'TICKER':<8} {'BASE ML':<10} {'REGIME':<12} {'SECTOR':<12} {'NEWS':<12} {'FINAL':<10} {'TOTAL BOOST':<12}")
+    console.print("="*80)
     
-    if results_df.empty:
-        console.print("No data to analyze.")
-        return
+    # Check if news analysis was enabled
+    news_enabled = any(row.get('News_Explanation', '') != "News analysis disabled" for _, row in results_df.iterrows())
     
-    for _, row in results_df.head(5).iterrows():  # Show top 5
-        ticker = row['Ticker']
-        raw_ml = row['Raw_ML_Score']
-        regime_boost = row['Regime_Boost'] 
-        sector_boost = row['Sector_Boost']
+    for _, row in results_df.iterrows():
+        base_ml = row['Raw_ML_Score']
+        regime_boost = row.get('Regime_Boost', 0)
+        sector_boost = row.get('Sector_Boost', 0)
+        news_boost = row.get('News_Boost', 0)
         final_score = row['Growth_Prob']
+        total_boost = row.get('Total_Boost', 0)
         
-        console.print(f"\n📊 {ticker} Analysis:")
-        console.print(f"├── 🤖 Base ML Score: {raw_ml:.1%}")
+        # Format percentage values
+        base_ml_str = f"{base_ml:.1%}"
+        regime_str = f"{regime_boost:+.1%}" if regime_boost != 0 else "±0.0%"
+        sector_str = f"{sector_boost:+.1%}" if sector_boost != 0 else "±0.0%"
         
-        if abs(regime_boost) > 0.01:  # Show if significant
-            regime_sign = "+" if regime_boost > 0 else ""
-            console.print(f"├── 🧠 Regime Adjustment: {regime_sign}{regime_boost:.1%}")
+        # Handle news display based on whether it's enabled
+        if news_enabled and news_boost != 0:
+            news_str = f"{news_boost:+.1%}"
+        elif news_enabled:
+            news_str = "±0.0%"
+        else:
+            news_str = "DISABLED"
+            
+        final_str = f"{final_score:.1%}"
+        total_str = f"{total_boost:+.1%}" if total_boost != 0 else "±0.0%"
         
-        if abs(sector_boost) > 0.01:  # Show if significant  
-            sector_sign = "+" if sector_boost > 0 else ""
-            console.print(f"├── 🏭 Sector Adjustment: {sector_sign}{sector_boost:.1%}")
+        console.print(f"{row['Ticker']:<8} {base_ml_str:<10} {regime_str:<12} {sector_str:<12} {news_str:<12} {final_str:<10} {total_str:<12}")
+    
+    console.print("="*80)
+    
+    # Add note about news analysis
+    if not news_enabled:
+        console.print("💡 News analysis disabled. Use --news flag to enable sentiment analysis.")
+    
+    # Show detailed explanations for top picks
+    console.print("\n📊 DETAILED ANALYSIS (Top 5):")
+    top_picks = results_df.nlargest(5, 'Growth_Prob')
+    
+    for i, (_, row) in enumerate(top_picks.iterrows(), 1):
+        console.print(f"\n{i}. {row['Ticker']} - {row['Company']}")
+        console.print(f"   💹 Final Conviction: {row['Growth_Prob']:.1%}")
+        console.print(f"   🤖 Base ML Score: {row['Raw_ML_Score']:.1%}")
         
-        total_boost = regime_boost + sector_boost
-        if abs(total_boost) > 0.01:
-            boost_sign = "+" if total_boost > 0 else ""
-            console.print(f"├── ⚡ Total Boost: {boost_sign}{total_boost:.1%}")
+        # Show adjustments with explanations
+        if row.get('Regime_Boost', 0) != 0:
+            console.print(f"   🌍 Regime Adjustment: {row['Regime_Boost']:+.1%} - {row.get('Regime_Explanation', '')}")
         
-        console.print(f"└── 🎯 Final Conviction: {final_score:.1%}")
+        if row.get('Sector_Boost', 0) != 0:
+            console.print(f"   🏭 Sector Adjustment: {row['Sector_Boost']:+.1%} - {row.get('Sector_Explanation', '')}")
+        
+        # Only show news adjustment if enabled and has an effect
+        if news_enabled and row.get('News_Boost', 0) != 0:
+            console.print(f"   📰 News Adjustment: {row['News_Boost']:+.1%} - {row.get('News_Explanation', '')}")
+        elif not news_enabled:
+            console.print(f"   📰 News Analysis: Disabled (use --news to enable)")
+        
+        # Show total impact
+        total_boost = row.get('Total_Boost', 0)
+        if total_boost != 0:
+            console.print(f"   🎯 Total Enhancement: {total_boost:+.1%}")
+        
+        console.print()
 
 def print_evaluation_results(results_df, config, market_intel=None, sector_intel=None):
     """Print evaluation mode results with detailed analysis"""
@@ -296,7 +334,7 @@ def print_sector_intelligence(sector_intel):
             performance_emoji = "🟢" if sector.performance_1m > 0 else "🔴"
             console.print(f"  {performance_emoji} {sector.sector_name}: {sector.performance_1m:+.1f}% (vs SPY: {sector.relative_strength_spy:+.1f}%)")
 
-def print_completion_stats(duration, num_candidates=None, market_intel=None, sector_intel=None):
+def print_completion_stats(duration, num_candidates=None, market_intel=None, sector_intel=None, news_enabled=False):
     """Print completion statistics"""
     console.print(f"\n⏱️ Analysis completed in {duration:.1f} seconds")
     if num_candidates is not None:
@@ -305,6 +343,10 @@ def print_completion_stats(duration, num_candidates=None, market_intel=None, sec
         console.print(f"🧠 Regime-adjusted predictions for {market_intel.current_regime.value.replace('_', ' ').title()} market")
     if sector_intel:
         console.print(f"🏭 Sector-adjusted for {sector_intel.rotation_trend} rotation")
+    if news_enabled:
+        console.print(f"📰 News sentiment analysis included")
+    else:
+        console.print(f"📰 News analysis disabled (use --news flag to enable)")
 
 # Helper functions
 def get_analysis_reason(row):
@@ -383,7 +425,7 @@ def get_recommendation_action(prob):
     else:
         return "Consider profit-taking if holding", "⚠️"
 
-def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, sector_explanations=None, market_intel=None, sector_intel=None, raw_probs=None, regime_probs=None):
+def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regime_explanations=None, sector_explanations=None, news_explanations=None, market_intel=None, sector_intel=None, raw_probs=None, regime_probs=None, sector_probs=None, news_probs=None):
     """Create a properly formatted results dataframe with probability breakdown"""
     results = []
     
@@ -397,15 +439,23 @@ def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regi
         # Calculate volume change (mock for now, in real version would be calculated)
         vol_change = ((row_data.get('Volume', 1) / row_data.get('Volume_Avg', 1)) - 1) * 100 if hasattr(row_data, 'get') else 50
         
-        # Calculate probability breakdown
+        # Calculate probability breakdown with news component
         raw_score = raw_probs[i] if raw_probs is not None and i < len(raw_probs) else probs[i]
         regime_score = regime_probs[i] if regime_probs is not None and i < len(regime_probs) else probs[i]
+        sector_score = sector_probs[i] if sector_probs is not None and i < len(sector_probs) else probs[i]
+        news_score = news_probs[i] if news_probs is not None and i < len(news_probs) else probs[i]
         final_score = probs[i] if i < len(probs) else 0.5
         
-        # Calculate boosts
+        # Calculate individual boosts
         regime_boost = regime_score - raw_score
-        sector_boost = final_score - regime_score
+        sector_boost = sector_score - regime_score  
+        news_boost = news_score - sector_score
         total_boost = final_score - raw_score
+        
+        # Get explanations
+        regime_explanation = regime_explanations[i] if regime_explanations and i < len(regime_explanations) else "No regime adjustment"
+        sector_explanation = sector_explanations[i] if sector_explanations and i < len(sector_explanations) else "No sector adjustment"
+        news_explanation = news_explanations[i] if news_explanations and i < len(news_explanations) else "No news data"
         
         result = {
             'Ticker': ticker,
@@ -414,7 +464,11 @@ def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regi
             'Raw_ML_Score': raw_score,
             'Regime_Boost': regime_boost,
             'Sector_Boost': sector_boost,
+            'News_Boost': news_boost,
             'Total_Boost': total_boost,
+            'Regime_Explanation': regime_explanation,
+            'Sector_Explanation': sector_explanation,
+            'News_Explanation': news_explanation,
             'RSI': row_data.get('RSI', 50) if hasattr(row_data, 'get') else 50,
             'Price': price,
             'Vol_Change': vol_change,

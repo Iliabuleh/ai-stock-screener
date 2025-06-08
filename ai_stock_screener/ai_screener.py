@@ -11,6 +11,7 @@ import sys
 import time
 from .output_formatter import *
 from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence, calculate_dynamic_sector_multiplier
+from .news_intelligence import get_news_intelligence, calculate_news_multiplier, NewsIntelligence
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -139,6 +140,58 @@ def apply_sector_adjustment(probability: float, ticker: str, sector_intel: Secto
         explanation = f"{stock_sector}: {', '.join(explanations)}"
     else:
         explanation = f"Minimal sector adjustment for {stock_sector}"
+    
+    return adjusted_prob, explanation
+
+def apply_news_adjustment(probability: float, ticker: str, news_intel: NewsIntelligence) -> tuple[float, str]:
+    """
+    Apply news sentiment adjustment to prediction probability
+    Returns: (adjusted_probability, explanation)
+    """
+    # Check if we have sentiment analysis for this ticker
+    if ticker not in news_intel.sentiment_analyses:
+        return probability, "No news data available"
+    
+    sentiment_analysis = news_intel.sentiment_analyses[ticker]
+    
+    # Calculate news multiplier
+    multiplier = calculate_news_multiplier(sentiment_analysis)
+    
+    adjusted_prob = probability * multiplier
+    
+    # Create detailed explanation
+    explanations = []
+    
+    # Sentiment component
+    if sentiment_analysis.overall_sentiment > 0.1:
+        sentiment_desc = f"positive sentiment ({sentiment_analysis.overall_sentiment:.2f})"
+        explanations.append(sentiment_desc)
+    elif sentiment_analysis.overall_sentiment < -0.1:
+        sentiment_desc = f"negative sentiment ({sentiment_analysis.overall_sentiment:.2f})"
+        explanations.append(sentiment_desc)
+    
+    # News volume component
+    if sentiment_analysis.news_volume > 0:
+        explanations.append(f"{sentiment_analysis.news_volume} articles")
+        
+        # Velocity component
+        if sentiment_analysis.news_velocity > 1.0:
+            explanations.append(f"high activity ({sentiment_analysis.news_velocity:.1f}/day)")
+    
+    # Trend component
+    if sentiment_analysis.sentiment_trend != "stable":
+        explanations.append(f"{sentiment_analysis.sentiment_trend} trend")
+    
+    # Dominant themes
+    if sentiment_analysis.dominant_themes:
+        theme_str = ", ".join(sentiment_analysis.dominant_themes[:2])  # Top 2 themes
+        explanations.append(f"themes: {theme_str}")
+    
+    if explanations:
+        confidence_change = ((adjusted_prob - probability) / probability) * 100 if probability > 0 else 0
+        explanation = f"News {confidence_change:+.1f}%: {'; '.join(explanations)}"
+    else:
+        explanation = "Minimal news adjustment"
     
     return adjusted_prob, explanation
 
@@ -341,7 +394,7 @@ def train_model(df, config):
 
     return final_model
 
-def run_screening(tickers, config, mode="eval"):
+def run_screening(tickers, config, mode="eval", news_analysis=False):
     start_time = time.time()
     
     # 🧠 Get market intelligence first
@@ -351,6 +404,14 @@ def run_screening(tickers, config, mode="eval"):
     # 🏭 Get sector intelligence
     console.print("🏭 Analyzing Sector Rotation...")
     sector_intel = get_sector_intelligence()
+    
+    # 📰 Get news intelligence (optional)
+    news_intel = None
+    if news_analysis:
+        console.print("📰 Gathering News Intelligence...")
+        news_intel = get_news_intelligence(tickers)
+    else:
+        console.print("📰 News analysis disabled (use --news flag to enable)")
     
     # Print beautiful header with market context
     print_header(mode, tickers, config, market_intel, sector_intel)
@@ -430,18 +491,41 @@ def run_screening(tickers, config, mode="eval"):
         final_probs.append(sector_adj_prob)
         sector_explanations.append(sector_explanation)
     
+    # 📰 Apply news adjustments (only if enabled)
+    if news_analysis and news_intel:
+        console.print(f"📰 Applying news sentiment adjustments...")
+        
+        news_adjusted_probs = []
+        news_explanations = []
+        
+        for i, ticker in enumerate(latest["Ticker"].tolist()):
+            sector_prob = final_probs[i]
+            news_adj_prob, news_explanation = apply_news_adjustment(sector_prob, ticker, news_intel)
+            news_adjusted_probs.append(news_adj_prob)
+            news_explanations.append(news_explanation)
+        
+        final_conviction_scores = news_adjusted_probs
+    else:
+        # No news adjustments - use sector-adjusted scores as final
+        news_adjusted_probs = final_probs.copy()  # Same as sector-adjusted
+        news_explanations = ["News analysis disabled"] * len(final_probs)
+        final_conviction_scores = final_probs
+    
     # Create results dataframe with detailed probability breakdown
     results_df = create_results_dataframe(
         latest["Ticker"].tolist(), 
-        final_probs,  # Final conviction scores
+        final_conviction_scores,  # Final conviction scores
         latest,
         stock_infos,
         regime_explanations=regime_explanations,
         sector_explanations=sector_explanations,
+        news_explanations=news_explanations,
         market_intel=market_intel,
         sector_intel=sector_intel,
         raw_probs=raw_probs,  # Add raw ML scores
-        regime_probs=regime_adjusted_probs  # Add regime-adjusted scores
+        regime_probs=regime_adjusted_probs,  # Add regime-adjusted scores
+        sector_probs=final_probs,  # Add sector-adjusted scores
+        news_probs=news_adjusted_probs  # Add news-adjusted scores (same as sector if disabled)
     )
     
     # Filter for high probability results in discovery mode
@@ -464,4 +548,4 @@ def run_screening(tickers, config, mode="eval"):
     # Print completion stats
     duration = time.time() - start_time
     num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
-    print_completion_stats(duration, num_candidates, market_intel, sector_intel)
+    print_completion_stats(duration, num_candidates, market_intel, sector_intel, news_enabled=news_analysis)

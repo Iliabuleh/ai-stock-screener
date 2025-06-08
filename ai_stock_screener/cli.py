@@ -2,7 +2,6 @@
 
 import argparse
 import sys
-from ai_stock_screener.clock import market_clock
 from ai_stock_screener.ai_screener import get_sp500_tickers, run_screening
 
 def main():
@@ -21,10 +20,10 @@ def main():
     parser.add_argument("--grid_search", type=int, default=1, 
                         help="Enable grid search over model hyperparameters (1 = enabled, 0 = disabled)")
     parser.add_argument("--ensemble_runs", type=int, default=1, help="Number of ensemble runs (default: 1)")
-    parser.add_argument("--run_market_clock", type=int, default=0,
-                        help="Enable market clock analysis before screening (1 = enabled, 0 = disabled)")
     parser.add_argument("--no_integrate_market", action="store_true",
                     help="Disable integration of SPY market data into training (default: enabled)")
+    parser.add_argument("--news", action="store_true",
+                    help="Enable news sentiment analysis (adds processing time)")
 
     args = parser.parse_args()
 
@@ -40,22 +39,16 @@ def main():
         "integrate_market": not args.no_integrate_market
     }
 
-    market_clock_data = None
-    if args.run_market_clock:
-        from ai_stock_screener.output_formatter import console
-        console.print("\n📊 Running market condition clock...")
-        market_clock_data = market_clock()
-
     if args.mode == "eval":
         if not args.tickers:
             from ai_stock_screener.output_formatter import console
             console.print("❌ Please provide --tickers for eval mode.")
             sys.exit(1)
         ticker_list = [ticker.strip().upper() for ticker in args.tickers.split(",") if ticker.strip()]
-        run_screening(ticker_list, config, mode="eval")
+        run_screening(ticker_list, config, mode="eval", news_analysis=args.news)
     else:
         tickers = get_sp500_tickers()
-        run_screening(tickers, config, mode="discovery")
+        run_screening(tickers, config, mode="discovery", news_analysis=args.news)
 
 if __name__ == "__main__":
     main()
