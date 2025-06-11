@@ -10,6 +10,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tabulate import tabulate
 import pandas as pd
 import time
+from typing import List, Dict
 
 console = Console()
 
@@ -66,9 +67,15 @@ def print_model_performance(accuracy, precision=None, recall=None, f1=None):
     if f1:
         console.print(f"F1-Score: {f1:.2f}")
 
-def print_discovery_results(results_df, config, market_intel=None, sector_intel=None):
-    """Print discovery mode results with beautiful table"""
-    console.print(f"\n📈 TOP GROWTH PREDICTIONS (Probability > 0.70):")
+def print_discovery_results(results_df, config, market_intel, sector_intel, discovery_threshold=0.70):
+    """Print results for discovery mode"""
+    from .ai_screener import get_effective_config
+    
+    # Get the actual threshold being used
+    eff_config = get_effective_config(config) 
+    actual_threshold = eff_config.get("discovery_threshold", discovery_threshold)
+    
+    console.print(f"\n📈 TOP GROWTH PREDICTIONS (Probability > {actual_threshold}):")
     
     if results_df.empty:
         console.print("❌ No high-probability growth candidates found.")
@@ -81,6 +88,7 @@ def print_discovery_results(results_df, config, market_intel=None, sector_intel=
     table.add_column("Sector", style="blue", no_wrap=True)  # Add sector column
     table.add_column("Growth Prob", style="green", justify="right")
     table.add_column("RSI", style="yellow", justify="right")
+    table.add_column("SMA150", style="bright_yellow", justify="right")
     table.add_column("Price", style="white", justify="right")
     table.add_column("Vol Chg", style="blue", justify="right")
     table.add_column("P/E Ratio", style="magenta", justify="right")
@@ -93,6 +101,16 @@ def print_discovery_results(results_df, config, market_intel=None, sector_intel=
         vol_chg = f"+{row['Vol_Change']:.0f}%" if row['Vol_Change'] > 0 else f"{row['Vol_Change']:.0f}%"
         pe_ratio = f"{row['PE_Ratio']:.1f}" if pd.notnull(row['PE_Ratio']) else "N/A"
         
+        # Format SMA150 with Above/Below indication
+        sma150_value = row.get('SMA_150')
+        if pd.notnull(sma150_value) and pd.notnull(row['Price']):
+            if row['Price'] > sma150_value:
+                sma150_display = f"Above (+{((row['Price'] / sma150_value - 1) * 100):.1f}%)"
+            else:
+                sma150_display = f"Below ({((row['Price'] / sma150_value - 1) * 100):.1f}%)"
+        else:
+            sma150_display = "N/A"
+        
         # Get sector for display
         from .clock import get_sector_for_stock
         sector = get_sector_for_stock(row['Ticker'])[:4]  # Abbreviated
@@ -103,6 +121,7 @@ def print_discovery_results(results_df, config, market_intel=None, sector_intel=
             sector,
             prob,
             rsi,
+            sma150_display,
             price,
             vol_chg,
             pe_ratio
@@ -204,6 +223,7 @@ def print_evaluation_results(results_df, config, market_intel=None, sector_intel
     table.add_column("Current Analysis", style="white", max_width=20)
     table.add_column("Prob", style="green", justify="right")
     table.add_column("RSI", style="yellow", justify="right")
+    table.add_column("SMA150", style="bright_yellow", justify="right")
     table.add_column("Price", style="white", justify="right")
     table.add_column("Vol Chg", style="blue", justify="right")
     table.add_column("Prediction", style="magenta", justify="center")
@@ -218,6 +238,16 @@ def print_evaluation_results(results_df, config, market_intel=None, sector_intel
         price = f"${row['Price']:.2f}" if pd.notnull(row['Price']) else "N/A"
         vol_chg = f"+{row['Vol_Change']:.0f}%" if row['Vol_Change'] > 0 else f"{row['Vol_Change']:.0f}%"
         
+        # Format SMA150 with Above/Below indication
+        sma150_value = row.get('SMA_150')
+        if pd.notnull(sma150_value) and pd.notnull(row['Price']):
+            if row['Price'] > sma150_value:
+                sma150_display = f"Above (+{((row['Price'] / sma150_value - 1) * 100):.1f}%)"
+            else:
+                sma150_display = f"Below ({((row['Price'] / sma150_value - 1) * 100):.1f}%)"
+        else:
+            sma150_display = "N/A"
+        
         # Get sector for display
         from .clock import get_sector_for_stock
         sector = get_sector_for_stock(row['Ticker'])[:4]  # Abbreviated
@@ -228,6 +258,7 @@ def print_evaluation_results(results_df, config, market_intel=None, sector_intel
             analysis,
             prob,
             rsi,
+            sma150_display,
             price,
             vol_chg,
             recommendation
@@ -412,11 +443,11 @@ def get_pe_description(pe_ratio):
     else:
         return "Attractive valuation"
 
-def get_recommendation_action(prob):
+def get_recommendation_action(prob, discovery_threshold=0.70):
     """Get recommendation action and emoji"""
     if prob > 0.85:
         return "High conviction buy", "🚀"
-    elif prob > 0.70:
+    elif prob > discovery_threshold:  # Use configurable threshold
         return "Good entry point", "📈"
     elif prob > 0.55:
         return "Small position or wait for pullback", "⚖️"
@@ -475,7 +506,175 @@ def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regi
             'PE_Ratio': row_data.get('PE_ratio', 25) if hasattr(row_data, 'get') else 25,
             'SMA_50': row_data.get('SMA_50', price * 0.95) if hasattr(row_data, 'get') else price * 0.95,
             'SMA_200': row_data.get('SMA_200', price * 0.90) if hasattr(row_data, 'get') else price * 0.90,
+            'SMA_150': row_data.get('SMA_150', price * 0.925) if hasattr(row_data, 'get') else price * 0.925,
         }
         results.append(result)
     
     return pd.DataFrame(results) 
+
+def print_hot_stocks_results(momentum_stocks, config):
+    """Print hot stocks momentum scanner results"""
+    console.print(f"\n🔥 MOMENTUM STOCKS ANALYSIS:")
+    
+    if not momentum_stocks:
+        console.print("❌ No momentum stocks found.")
+        return
+    
+    # Create rich table for momentum results
+    table = Table(show_header=True, header_style="bold red")
+    table.add_column("Rank", style="white", no_wrap=True)
+    table.add_column("Ticker", style="cyan", no_wrap=True)
+    table.add_column("Momentum", style="red", justify="right")
+    table.add_column("RSI", style="yellow", justify="right")
+    table.add_column("SMA20", style="bright_yellow", justify="right")
+    table.add_column("SMA150", style="bright_green", justify="right")
+    table.add_column("EMA Cross", style="green", justify="center")
+    table.add_column("Volume", style="blue", justify="right")
+    table.add_column("3D Move", style="magenta", justify="right")
+    table.add_column("5D Move", style="magenta", justify="right")
+    
+    for i, (ticker, score, details) in enumerate(momentum_stocks, 1):
+        # Format momentum score
+        momentum_str = f"{score:.3f}"
+        
+        # Format RSI
+        rsi = details.get('rsi', 0)
+        rsi_str = f"{rsi:.1f}"
+        
+        # Format Price vs SMA20
+        price_vs_sma20 = details.get('price_vs_sma20', 1.0)
+        if price_vs_sma20 >= 1.0:
+            sma20_str = f"+{((price_vs_sma20 - 1) * 100):.1f}%"
+        else:
+            sma20_str = f"{((price_vs_sma20 - 1) * 100):.1f}%"
+        
+        # Format Price vs SMA150 (trend filter)
+        price_vs_sma150 = details.get('price_vs_150sma', 1.0)
+        if price_vs_sma150 >= 1.05:  # 5%+ above = strong trend
+            sma150_str = f"✅ +{((price_vs_sma150 - 1) * 100):.1f}%"
+        elif price_vs_sma150 >= 1.0:  # Just above = weak trend
+            sma150_str = f"🟡 +{((price_vs_sma150 - 1) * 100):.1f}%"
+        else:  # Below = rejected (shouldn't happen due to filter)
+            sma150_str = f"❌ {((price_vs_sma150 - 1) * 100):.1f}%"
+        
+        # Format EMA Crossover
+        ema_bullish = details.get('ema_bullish', False)
+        ema_recent = details.get('ema_crossover_recent', False)
+        if ema_bullish and ema_recent:
+            ema_str = "🔥 NEW"
+        elif ema_bullish:
+            ema_str = "✅ Bull"
+        else:
+            ema_str = "❌ Bear"
+        
+        # Format Volume
+        volume_ratio = details.get('volume_ratio', 1.0)
+        volume_str = f"{volume_ratio:.1f}x"
+        
+        # Format Price Moves
+        price_3d = details.get('price_3d', 0)
+        price_5d = details.get('price_5d', 0)
+        price_3d_str = f"{price_3d:+.1f}%"
+        price_5d_str = f"{price_5d:+.1f}%"
+        
+        table.add_row(
+            str(i),
+            ticker,
+            momentum_str,
+            rsi_str,
+            sma20_str,
+            sma150_str,
+            ema_str,
+            volume_str,
+            price_3d_str,
+            price_5d_str
+        )
+    
+    console.print(table)
+    
+    # Print detailed breakdown for top 3
+    console.print(f"\n📊 DETAILED MOMENTUM BREAKDOWN (Top 3):")
+    
+    for i, (ticker, score, details) in enumerate(momentum_stocks[:3], 1):
+        console.print(f"\n{i}. {ticker} - Momentum Score: {score:.3f}")
+        
+        # PRIMARY: Long-term Trend Analysis (40% weight)
+        trend_score = details.get('trend_score', 0)
+        trend_desc = details.get('trend_desc', 'Unknown')
+        long_term_slope = details.get('long_term_slope', 'Unknown')
+        trend_period = details.get('trend_period', 'Unknown')
+        console.print(f"   🎯 PRIMARY - Long-term Trend (40%): {trend_score:.2f} - {trend_desc}")
+        console.print(f"      📈 SMA150 Slope: {long_term_slope} ({trend_period} analysis)")
+        
+        # Setup Analysis (20% weight)
+        setup_score = details.get('setup_score', 0)
+        setup_desc = details.get('setup_desc', 'Unknown')
+        sma_relationship = details.get('sma_relationship', 'Unknown')
+        console.print(f"   📍 SMA Setup Timing (20%): {setup_score:.2f} - {setup_desc}")
+        console.print(f"      📊 20SMA vs 150SMA: {sma_relationship}")
+        
+        # Price vs 20SMA Analysis (15% weight) - NEW
+        price20_score = details.get('price20_score', 0)
+        price20_desc = details.get('price20_desc', 'Unknown')
+        price_sma20_pct = details.get('price_sma20_pct', 'Unknown')
+        console.print(f"   💰 Price vs 20SMA (15%): {price20_score:.2f} - {price20_desc}")
+        console.print(f"      📈 Distance from 20SMA: {price_sma20_pct}")
+        
+        # Volume Analysis (20% weight)
+        volume_score = details.get('volume_score', 0)
+        volume_desc = details.get('volume_desc', 'Unknown')
+        volume_ratio = details.get('volume_ratio', 1.0)
+        console.print(f"   📊 Volume Confirmation (20%): {volume_score:.2f} - {volume_desc}")
+        console.print(f"      📈 Volume Ratio: {volume_ratio:.1f}x average")
+        
+        # EMA Analysis (5% weight)
+        ema_score = details.get('ema_score', 0)
+        ema_desc = details.get('ema_desc', 'Unknown')
+        ema_separation = details.get('ema_separation', 0)
+        console.print(f"   🔄 EMA Momentum (5%): {ema_score:.2f} - {ema_desc}")
+        console.print(f"      📈 EMA13x48: {ema_separation:+.1f}% separation")
+        
+        # RSI Filter (5% weight)
+        rsi_score = details.get('rsi_score', 0)
+        rsi_desc = details.get('rsi_desc', 'Unknown')
+        rsi = details.get('rsi', 0)
+        console.print(f"   📊 RSI Filter (5%): {rsi_score:.2f} - {rsi_desc}")
+        console.print(f"      📈 RSI Level: {rsi:.1f}")
+        
+        # Price positioning context
+        price_vs_150sma = details.get('price_vs_150sma', 1.0)
+        distance_from_150sma = details.get('distance_from_150sma', 'Unknown')
+        console.print(f"   📊 Context - Price vs 150SMA: {distance_from_150sma}")
+    
+    # Legend (updated with new weights)
+    console.print(f"\n📝 ENHANCED TREND-FOCUSED MOMENTUM SCORING:")
+    console.print(f"   • Long-term Trend: 35% (SMA150 slope = PRIMARY driver)")
+    console.print(f"   • SMA Setup Timing: 20% (20SMA vs 150SMA positioning)")
+    console.print(f"   • Price vs 20SMA: 15% (short-term momentum positioning) - NEW")
+    console.print(f"   • Volume Confirmation: 20% (1.5x+ = strong signal)")
+    console.print(f"   • EMA Momentum: 5% (13x48 crossover)")
+    console.print(f"   • RSI Filter: 5% (avoid extremes only)") 
+
+def get_probability_color(prob, discovery_threshold=0.70):
+    """Get color for probability display based on thresholds"""
+    if prob > 0.85:
+        return "bold green"
+    elif prob > discovery_threshold:  # Use configurable threshold
+        return "green"
+    elif prob > 0.50:
+        return "yellow"
+    elif prob > 0.30:
+        return "red"
+    else:
+        return "bold red"
+
+def get_effective_threshold(config, mode):
+    """
+    Get the effective threshold based on mode and configuration
+    """
+    if mode == "discovery":
+        # In discovery mode, use discovery_threshold
+        return config.get("discovery_threshold", DEFAULT_CONFIG["discovery_threshold"])
+    else:
+        # In evaluation mode, use threshold (which defaults to 0.0)
+        return config.get("threshold", DEFAULT_CONFIG["threshold"]) 

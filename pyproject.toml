@@ -6,7 +6,8 @@ authors = ["Ilia Buleh <ilia.buleh@gmail.com>"]
 readme = "README.md"
 packages = [
     { include = "ai_stock_screener", format = ["sdist", "wheel"] },
-    { include = "covered_call_analyzer", format = ["sdist", "wheel"] }
+    { include = "covered_call_analyzer", format = ["sdist", "wheel"] },
+    { include = "pro_screener", format = ["sdist", "wheel"] }
 ]
 
 [tool.poetry.dependencies]
@@ -30,6 +31,7 @@ textblob = "^0.19.0"
 [tool.poetry.scripts]
 screener = "ai_stock_screener.cli:main"
 covered-call-div = "covered_call_analyzer.covered_call_analyzer:main"
+pro-screener = "pro_screener.pro_screener:main"
 
 [build-system]
 requires = ["poetry-core"]

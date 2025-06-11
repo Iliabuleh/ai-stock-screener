@@ -389,24 +389,18 @@ def get_news_intelligence(tickers: List[str]) -> NewsIntelligence:
     sentiment_analyses = {}
     all_news = []
     
-    for ticker in tickers:
-        print(f"📰 Processing news for {ticker}...")
+    for i, ticker in enumerate(tickers):
+        # Clean progress indicator instead of individual ticker spam
+        if (i + 1) % 25 == 0 or i == 0:  # Show progress every 25 tickers, plus first one
+            print(f"📰 Processing news... {i + 1}/{len(tickers)} stocks")
         
         # Simple approach: try to get news, let fallback handle any issues
-        news_items = get_enhanced_news(ticker)
+        news_items = get_enhanced_news(ticker, quiet=True)  # Add quiet mode
         
         if news_items:
             sentiment_analysis = calculate_sentiment_analysis(ticker, news_items)
             sentiment_analyses[ticker] = sentiment_analysis
             all_news.extend(news_items)
-            
-            # Determine which source was actually used
-            source_used = "Alpha Vantage" if any(item.source != "Yahoo Finance" for item in news_items) else "Yahoo Finance"
-            
-            print(f"✅ Processed {len(news_items)} articles for {ticker} via {source_used} "
-                  f"(sentiment: {sentiment_analysis.overall_sentiment:.3f})")
-        else:
-            print(f"⚠️ No news found for {ticker}")
         
         # Small delay to be respectful to APIs
         time.sleep(NEWS_FALLBACK_CONFIG["delay_between_calls"])
@@ -571,33 +565,39 @@ def parse_alpha_vantage_news(av_data: Dict, ticker: str) -> List[NewsItem]:
         print(f"⚠️ Error parsing Alpha Vantage data: {e}")
         return []
 
-def get_enhanced_news(ticker: str, max_articles: int = 10) -> List[NewsItem]:
+def get_enhanced_news(ticker: str, max_articles: int = 10, quiet: bool = False) -> List[NewsItem]:
     """Get news using simple hybrid approach: Alpha Vantage first, Yahoo Finance fallback"""
     
     # Step 1: Check if API key is set
     if not ALPHA_VANTAGE_CONFIG["api_key"]:
-        print(f"📰 No Alpha Vantage API key, using Yahoo Finance for {ticker}")
+        if not quiet:
+            print(f"📰 No Alpha Vantage API key, using Yahoo Finance for {ticker}")
         return get_yahoo_news(ticker, max_articles)
     
     # Step 2: Try Alpha Vantage
-    print(f"📰 Trying Alpha Vantage for {ticker}...")
+    if not quiet:
+        print(f"📰 Trying Alpha Vantage for {ticker}...")
     av_data = get_alpha_vantage_news(ticker, limit=max_articles)
     
     if av_data:
         av_news = parse_alpha_vantage_news(av_data, ticker)
         if av_news:
-            print(f"✅ Got {len(av_news)} articles from Alpha Vantage for {ticker}")
+            if not quiet:
+                print(f"✅ Got {len(av_news)} articles from Alpha Vantage for {ticker}")
             return av_news[:max_articles]
     
     # Step 3: Fallback to Yahoo Finance
-    print(f"📰 Falling back to Yahoo Finance for {ticker}...")
+    if not quiet:
+        print(f"📰 Falling back to Yahoo Finance for {ticker}...")
     yahoo_news = get_yahoo_news(ticker, max_articles)
     
     if yahoo_news:
-        print(f"✅ Got {len(yahoo_news)} articles from Yahoo Finance for {ticker}")
+        if not quiet:
+            print(f"✅ Got {len(yahoo_news)} articles from Yahoo Finance for {ticker}")
         return yahoo_news
     
-    print(f"⚠️ No news found for {ticker}")
+    if not quiet:
+        print(f"⚠️ No news found for {ticker}")
     return [] 
 
 def normalize_sentiment_score(sentiment_score: float, source: str) -> float:
