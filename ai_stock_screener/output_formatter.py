@@ -284,20 +284,40 @@ def print_technical_breakdown(results_df, config):
         console.print(f"\n{ticker} Analysis:")
         
         # Technical indicators tree
-        rsi = row['RSI'] if pd.notnull(row['RSI']) else 0
-        rsi_desc = get_rsi_description(rsi)
+        rsi = row['RSI'] if pd.notnull(row['RSI']) else None
+        rsi_desc = get_rsi_description(rsi) if rsi is not None else "(No RSI data)"
         
-        sma50 = row.get('SMA_50', row['Price'] * 0.95)  # Fallback
-        sma200 = row.get('SMA_200', row['Price'] * 0.90)  # Fallback
+        # FIXED: Don't create fake SMA values - use actual data or show unavailable
+        sma50 = row.get('SMA_50') if pd.notnull(row.get('SMA_50')) else None
+        sma200 = row.get('SMA_200') if pd.notnull(row.get('SMA_200')) else None
         
         vol_change = row['Vol_Change']
-        pe_ratio = row['PE_Ratio'] if pd.notnull(row['PE_Ratio']) else 0
+        pe_ratio = row['PE_Ratio'] if pd.notnull(row['PE_Ratio']) else None
         
-        console.print(f"├── RSI: {rsi:.1f} {rsi_desc}")
-        console.print(f"├── SMA50: ${sma50:.2f} ({'Price above' if row['Price'] > sma50 else 'Price below'})")
-        console.print(f"├── SMA200: ${sma200:.2f} ({'Strong uptrend' if row['Price'] > sma200 * 1.05 else 'Uptrend confirmed' if row['Price'] > sma200 else 'Below trend'})")
+        # Only show RSI if we have valid data
+        if rsi is not None:
+            console.print(f"├── RSI: {rsi:.1f} {rsi_desc}")
+        else:
+            console.print(f"├── RSI: Not available (insufficient data)")
+            
+        # Only show SMA comparisons if we have valid data
+        if sma50 is not None:
+            console.print(f"├── SMA50: ${sma50:.2f} ({'Price above' if row['Price'] > sma50 else 'Price below'})")
+        else:
+            console.print(f"├── SMA50: Not available (insufficient data)")
+            
+        if sma200 is not None:
+            console.print(f"├── SMA200: ${sma200:.2f} ({'Strong uptrend' if row['Price'] > sma200 * 1.05 else 'Uptrend confirmed' if row['Price'] > sma200 else 'Below trend'})")
+        else:
+            console.print(f"├── SMA200: Not available (insufficient data)")
+            
         console.print(f"├── Volume: {vol_change:+.0f}% vs avg ({get_volume_description(vol_change)})")
-        console.print(f"├── P/E Ratio: {pe_ratio:.1f} ({get_pe_description(pe_ratio)})")
+        
+        if pe_ratio is not None:
+            console.print(f"├── P/E Ratio: {pe_ratio:.1f} ({get_pe_description(pe_ratio)})")
+        else:
+            console.print(f"├── P/E Ratio: Not available")
+            
         console.print(f"└── 🎯 Prediction: {row['Growth_Prob']*100:.1f}% probability of {config.get('threshold', 0.05)*100:.0f}%+ gain in {config.get('future_days', 5)} days")
 
 def print_portfolio_summary(results_df, config):
@@ -323,21 +343,6 @@ def print_portfolio_summary(results_df, config):
         action, emoji = get_recommendation_action(row['Growth_Prob'])
         console.print(f"{action_num}. {emoji} {row['Ticker']} - {action} ({row['Growth_Prob']*100:.0f}% probability)")
         action_num += 1
-
-def print_market_context(spy_data=None, integration_enabled=True):
-    """Print market context information"""
-    console.print(f"\n📊 Market Context:")
-    
-    if spy_data is not None:
-        # Mock some market trend analysis
-        trend = "BULLISH (+1.8% this week)"  # In real implementation, calculate from spy_data
-        sector = "OUTPERFORMING (+3.2% vs S&P)"  # Would be calculated
-        console.print(f"S&P 500 Trend: {trend}")
-        console.print(f"Tech Sector: {sector}")
-    else:
-        console.print("Market data not available")
-    
-    console.print(f"Market Integration: {'ENABLED' if integration_enabled else 'DISABLED'}")
 
 def print_enhanced_market_context(market_intel):
     """Print enhanced market context with regime analysis"""
@@ -395,26 +400,28 @@ def get_analysis_reason(row):
 def get_detailed_analysis(row):
     """Get detailed analysis and recommendation for evaluation mode"""
     prob = row['Growth_Prob']
-    rsi = row['RSI'] if pd.notnull(row['RSI']) else 50
+    rsi = row['RSI'] if pd.notnull(row['RSI']) else None
     
     if prob > 0.85:
-        analysis = "🟢 STRONG BUY\n• " + ("Oversold + Volume" if rsi < 40 else "Breaking resistance")
+        analysis = "🟢 STRONG BUY\n• " + ("Oversold + Volume" if rsi is not None and rsi < 40 else "Breaking resistance" if rsi is not None else "Strong momentum (RSI unavailable)")
         recommendation = "GROWTH"
     elif prob > 0.65:
-        analysis = "🟡 MODERATE BUY\n• " + ("Neutral RSI" if 40 <= rsi <= 60 else "Good momentum")
+        analysis = "🟡 MODERATE BUY\n• " + ("Neutral RSI" if rsi is not None and 40 <= rsi <= 60 else "Good momentum" if rsi is not None else "Good momentum (RSI unavailable)")
         recommendation = "GROWTH"
     elif prob > 0.45:
-        analysis = "🔶 HOLD\n• " + ("Overbought RSI" if rsi > 70 else "Mixed signals")
+        analysis = "🔶 HOLD\n• " + ("Overbought RSI" if rsi is not None and rsi > 70 else "Mixed signals" if rsi is not None else "Mixed signals (RSI unavailable)")
         recommendation = "HOLD"
     else:
-        analysis = "🔴 WEAK\n• " + ("Very overbought" if rsi > 75 else "Volume declining")
+        analysis = "🔴 WEAK\n• " + ("Very overbought" if rsi is not None and rsi > 75 else "Volume declining" if rsi is not None else "Volume declining (RSI unavailable)")
         recommendation = "NO GROWTH"
     
     return analysis, recommendation
 
 def get_rsi_description(rsi):
     """Get RSI level description"""
-    if rsi < 30:
+    if rsi is None:
+        return "(No RSI data)"
+    elif rsi < 30:
         return "(Oversold territory)"
     elif rsi > 70:
         return "(Overbought territory)"
@@ -500,13 +507,13 @@ def create_results_dataframe(tickers, probs, latest_data, stock_infos=None, regi
             'Regime_Explanation': regime_explanation,
             'Sector_Explanation': sector_explanation,
             'News_Explanation': news_explanation,
-            'RSI': row_data.get('RSI', 50) if hasattr(row_data, 'get') else 50,
+            'RSI': row_data.get('RSI') if hasattr(row_data, 'get') and pd.notnull(row_data.get('RSI')) else None,
             'Price': price,
             'Vol_Change': vol_change,
-            'PE_Ratio': row_data.get('PE_ratio', 25) if hasattr(row_data, 'get') else 25,
-            'SMA_50': row_data.get('SMA_50', price * 0.95) if hasattr(row_data, 'get') else price * 0.95,
-            'SMA_200': row_data.get('SMA_200', price * 0.90) if hasattr(row_data, 'get') else price * 0.90,
-            'SMA_150': row_data.get('SMA_150', price * 0.925) if hasattr(row_data, 'get') else price * 0.925,
+            'PE_Ratio': row_data.get('PE_ratio') if hasattr(row_data, 'get') and pd.notnull(row_data.get('PE_ratio')) else None,
+            'SMA_50': row_data.get('SMA_50') if hasattr(row_data, 'get') and pd.notnull(row_data.get('SMA_50')) else None,
+            'SMA_200': row_data.get('SMA_200') if hasattr(row_data, 'get') and pd.notnull(row_data.get('SMA_200')) else None,
+            'SMA_150': row_data.get('SMA_150') if hasattr(row_data, 'get') and pd.notnull(row_data.get('SMA_150')) else None,
         }
         results.append(result)
     
@@ -654,19 +661,6 @@ def print_hot_stocks_results(momentum_stocks, config):
     console.print(f"   • Volume Confirmation: 20% (1.5x+ = strong signal)")
     console.print(f"   • EMA Momentum: 5% (13x48 crossover)")
     console.print(f"   • RSI Filter: 5% (avoid extremes only)") 
-
-def get_probability_color(prob, discovery_threshold=0.70):
-    """Get color for probability display based on thresholds"""
-    if prob > 0.85:
-        return "bold green"
-    elif prob > discovery_threshold:  # Use configurable threshold
-        return "green"
-    elif prob > 0.50:
-        return "yellow"
-    elif prob > 0.30:
-        return "red"
-    else:
-        return "bold red"
 
 def get_effective_threshold(config, mode):
     """

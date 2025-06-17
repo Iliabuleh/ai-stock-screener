@@ -5,13 +5,13 @@ Incorporates all advanced technical analysis methods from MCP-trader that were m
 
 Key Features Added:
 - ADRP (Average Daily Range Percentage) - volatility assessment
-- Multi-SMA trend alignment analysis
+- Multi-SMA trend alignment analysis with configurable strategy weights
 - MACD crossover detection
-- Advanced pattern recognition (double tops/bottoms, head & shoulders, triangles, wedges)
+- Advanced pattern recognition with dynamic ATR-based thresholds
 - Volume vs average comparison
 - Multiple stop-loss methodologies
-- Detailed relative strength classifications
-- Volume Profile Analysis (POC + Value Area)
+- Detailed relative strength classifications with proper normalization
+- Volume Profile Analysis (POC + Value Area) with fixed double-counting
 - Discovery mode with dynamic symbol fetching
 """
 
@@ -19,26 +19,34 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
+import math
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 import argparse
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from scipy.stats import linregress
+import re
 
-# Import dynamic ticker functions from local helper
-from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
+# Import dynamic ticker functions - FIXED import for direct execution
+try:
+    from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
+except ImportError:
+    # Fallback for direct script execution
+    from helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
 
 console = Console()
 
 class VolumeProfileAnalysis:
-    """Advanced volume analysis for identifying key price levels (from enhanced_technical.py)"""
+    """Advanced volume analysis for identifying key price levels - FIXED double-counting issue"""
     
     @staticmethod
     def analyze_volume_profile(df: pd.DataFrame, num_bins: int = 10) -> Dict[str, Any]:
         """
         Create volume profile analysis by price level
         Identifies Point of Control (POC) and Value Area
+        FIXED: Volume double-counting when candles span multiple bins
         """
         try:
             if len(df) < 20:
@@ -60,15 +68,34 @@ class VolumeProfileAnalysis:
                 "bins": []
             }
             
-            # Calculate volume by price bin
+            # Calculate volume by price bin - FIXED: Proportional distribution
             for i in range(num_bins):
                 bin_low = price_min + i * bin_width
                 bin_high = bin_low + bin_width
                 bin_mid = (bin_low + bin_high) / 2
                 
-                # Filter data in this price range
-                mask = (df[low_col] <= bin_high) & (df[high_col] >= bin_low)
-                volume_in_bin = df.loc[mask, volume_col].sum()
+                volume_in_bin = 0
+                
+                # Process each candle individually to avoid double-counting
+                for idx, row in df.iterrows():
+                    candle_high = row[high_col]
+                    candle_low = row[low_col]
+                    candle_volume = row[volume_col]
+                    
+                    # Check if candle overlaps with this bin
+                    if candle_high >= bin_low and candle_low <= bin_high:
+                        # Calculate overlap percentage
+                        overlap_low = max(bin_low, candle_low)
+                        overlap_high = min(bin_high, candle_high)
+                        candle_range = candle_high - candle_low
+                        
+                        if candle_range > 0:
+                            overlap_percentage = (overlap_high - overlap_low) / candle_range
+                            volume_in_bin += candle_volume * overlap_percentage
+                        else:
+                            # Single price point, full volume if in range
+                            if bin_low <= candle_low <= bin_high:
+                                volume_in_bin += candle_volume
                 
                 # Calculate percentage of total volume
                 total_volume = df[volume_col].sum()
@@ -109,10 +136,95 @@ class VolumeProfileAnalysis:
 class ComprehensiveTechnicalAnalysis:
     """
     Complete technical analysis incorporating all MCP-trader methods
+    ENHANCED: Configurable strategy weights, dynamic thresholds, proper normalization
     """
     
-    def __init__(self):
+    def __init__(self, strategy: str = "balanced"):
         self.console = Console()
+        self.strategy = strategy
+        self.sma_weights = self.get_sma_weights(strategy)
+    
+    def get_sma_weights(self, strategy: str = "balanced") -> Dict[str, int]:
+        """Return SMA weights based on trading strategy - CONFIGURABLE APPROACH"""
+        
+        if strategy == "long_term":
+            return {
+                "sma_200": 40,  # Major trend most important
+                "sma_50": 25,   
+                "sma_20": 10,
+                "20_50_cross": 15,
+                "50_200_cross": 10
+            }
+        
+        elif strategy == "momentum":  # Original Pro Screener approach
+            return {
+                "sma_20": 30,   # Recent momentum most important
+                "sma_50": 25,   
+                "sma_200": 20,  # Background context
+                "20_50_cross": 15,
+                "50_200_cross": 10
+            }
+        
+        elif strategy == "balanced":  # Balanced approach
+            return {
+                "sma_200": 30,  # Balanced weighting
+                "sma_50": 25,   
+                "sma_20": 20,
+                "20_50_cross": 15,
+                "50_200_cross": 10
+            }
+        
+        else:  # Default balanced
+            return self.get_sma_weights("balanced")
+    
+    def get_dynamic_threshold(self, df: pd.DataFrame, base_percent: float) -> float:
+        """Calculate dynamic threshold based on ATR - ADAPTIVE THRESHOLDS"""
+        try:
+            current_price = df["Close"].iloc[-1]
+            atr = df["atr"].iloc[-1] if "atr" in df.columns else None
+            
+            if atr and pd.notnull(atr):
+                # Use ATR as volatility measure (more adaptive)
+                atr_percent = (atr / current_price) * 100
+                # Scale base threshold by volatility (0.5x to 2x range)
+                volatility_multiplier = max(0.5, min(2.0, atr_percent / 2.0))
+                return base_percent * volatility_multiplier
+            else:
+                return base_percent  # Fallback to fixed
+        except:
+            return base_percent
+    
+    def normalize_relative_performance(self, relative_perf: float) -> float:
+        """Convert relative performance to 0-100 RS score using sigmoid normalization - FIXED FORMULA"""
+        # Sigmoid with scaling: maps -50% to ~5, +50% to ~95, 0% to 50
+        sigmoid_input = relative_perf / 20  # Scale factor
+        sigmoid_output = 1 / (1 + math.exp(-sigmoid_input))
+        return round(sigmoid_output * 98 + 1, 2)  # Scale to 1-99 range
+    
+    def classify_volume_ratio(self, volume_ratio: float, adrp: float = None) -> Tuple[str, str]:
+        """Classify volume ratio with volatility adjustment - DYNAMIC CLASSIFICATION"""
+        if adrp is None:
+            # Standard thresholds for unknown volatility
+            high_threshold = 1.5
+            normal_threshold = 0.8
+        else:
+            # Adjust thresholds based on stock volatility
+            if adrp > 5:  # High volatility stock
+                high_threshold = 2.0    # Needs higher volume for "high"
+                normal_threshold = 1.0   
+            elif adrp < 2:  # Low volatility stock  
+                high_threshold = 1.2    # Lower bar for "high" volume
+                normal_threshold = 0.6
+            else:  # Normal volatility
+                high_threshold = 1.5
+                normal_threshold = 0.8
+        
+        if volume_ratio > high_threshold:
+            return "High", "✅"
+        elif volume_ratio > normal_threshold:
+            return "Normal", "🟡"
+        else:
+            return "Low", "❌"
     
     def add_comprehensive_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add all technical indicators including missing MCP-trader ones"""
@@ -153,55 +265,100 @@ class ComprehensiveTechnicalAnalysis:
         """
         MCP-TRADER MISSING: Comprehensive trend status analysis
         Checks multiple SMA alignments and crossovers
+        ENHANCED: Configurable strategy weights, improved validation
         """
         if df.empty:
             return {"error": "Empty dataframe"}
         
         latest = df.iloc[-1]
         
-        # Multi-SMA trend alignment (missing from our implementation)
-        # Add null checks to prevent NoneType comparison errors
+        # Multi-SMA trend alignment - FIXED: Percentage-based validation
         current_price = latest["Close"]
-        sma_20 = latest["sma_20"] if pd.notnull(latest["sma_20"]) else current_price
-        sma_50 = latest["sma_50"] if pd.notnull(latest["sma_50"]) else current_price
-        sma_200 = latest["sma_200"] if pd.notnull(latest["sma_200"]) else current_price
-        rsi = latest["rsi"] if pd.notnull(latest["rsi"]) else 50
-        adrp = latest["adrp"] if pd.notnull(latest["adrp"]) else 2.0
-        volume_ratio = latest["volume_ratio"] if pd.notnull(latest["volume_ratio"]) else 1.0
         
+        # Use 0.1% threshold instead of absolute $0.01 - SCALE INDEPENDENT
+        sma_20_valid = (pd.notnull(latest.get("sma_20")) and 
+                        abs(latest["sma_20"] - current_price) / current_price > 0.001)
+        sma_50_valid = (pd.notnull(latest.get("sma_50")) and 
+                        abs(latest["sma_50"] - current_price) / current_price > 0.001)  
+        sma_200_valid = (pd.notnull(latest.get("sma_200")) and 
+                         abs(latest["sma_200"] - current_price) / current_price > 0.001)
+        
+        sma_20 = latest["sma_20"] if sma_20_valid else None
+        sma_50 = latest["sma_50"] if sma_50_valid else None
+        sma_200 = latest["sma_200"] if sma_200_valid else None
+        
+        # Only calculate trend components if we have valid SMA data
         trend_status = {
-            "above_20sma": current_price > sma_20,
-            "above_50sma": current_price > sma_50, 
-            "above_200sma": current_price > sma_200,
-            "20_50_bullish": sma_20 > sma_50,  # Golden cross component
-            "50_200_bullish": sma_50 > sma_200,  # Golden cross 
-            "rsi": rsi,
-            "adrp": adrp,  # NEW: Volatility measure
-            "volume_ratio": volume_ratio,  # NEW: Volume analysis
+            "above_20sma": current_price > sma_20 if sma_20 is not None else None,
+            "above_50sma": current_price > sma_50 if sma_50 is not None else None,
+            "above_200sma": current_price > sma_200 if sma_200 is not None else None,
+            "20_50_bullish": sma_20 > sma_50 if (sma_20 is not None and sma_50 is not None) else None,
+            "50_200_bullish": sma_50 > sma_200 if (sma_50 is not None and sma_200 is not None) else None,
+            "rsi": latest["rsi"] if pd.notnull(latest.get("rsi")) else None,
+            "adrp": latest["adrp"] if pd.notnull(latest.get("adrp")) else None,
+            "volume_ratio": latest["volume_ratio"] if pd.notnull(latest.get("volume_ratio")) else None,
+            "strategy": self.strategy,
+            "sma_validity": {
+                "sma_20_valid": sma_20_valid,
+                "sma_50_valid": sma_50_valid, 
+                "sma_200_valid": sma_200_valid
+            }
         }
         
         # Add MACD analysis if available
         if "macd_bullish" in df.columns and pd.notnull(latest.get("macd_bullish")):
             trend_status["macd_bullish"] = latest["macd_bullish"]
         
-        # Calculate trend strength score (0-100)
+        # Calculate trend strength score (0-100) using STRATEGY-SPECIFIC WEIGHTS
         trend_score = 0
-        if trend_status["above_200sma"]: trend_score += 25
-        if trend_status["above_50sma"]: trend_score += 20
-        if trend_status["above_20sma"]: trend_score += 15
-        if trend_status["20_50_bullish"]: trend_score += 20
-        if trend_status["50_200_bullish"]: trend_score += 20
+        max_possible_score = 0
+        weights = self.sma_weights
         
-        trend_status["trend_strength"] = trend_score
+        # Apply strategy-specific weights
+        if trend_status["above_200sma"] is not None:
+            max_possible_score += weights["sma_200"]
+            if trend_status["above_200sma"]: 
+                trend_score += weights["sma_200"]
+                
+        if trend_status["above_50sma"] is not None:
+            max_possible_score += weights["sma_50"]
+            if trend_status["above_50sma"]: 
+                trend_score += weights["sma_50"]
+                
+        if trend_status["above_20sma"] is not None:
+            max_possible_score += weights["sma_20"]
+            if trend_status["above_20sma"]: 
+                trend_score += weights["sma_20"]
+                
+        if trend_status["20_50_bullish"] is not None:
+            max_possible_score += weights["20_50_cross"]
+            if trend_status["20_50_bullish"]: 
+                trend_score += weights["20_50_cross"]
+                
+        if trend_status["50_200_bullish"] is not None:
+            max_possible_score += weights["50_200_cross"]
+            if trend_status["50_200_bullish"]: 
+                trend_score += weights["50_200_cross"]
         
-        # Trend classification
-        if trend_score >= 90:
+        # Scale score based on available data
+        if max_possible_score > 0:
+            scaled_trend_score = int((trend_score / max_possible_score) * 100)
+        else:
+            scaled_trend_score = 0  # No valid SMA data
+            
+        trend_status["trend_strength"] = scaled_trend_score
+        trend_status["trend_data_quality"] = f"{max_possible_score}/100 points available ({self.strategy} strategy)"
+        
+        # Trend classification with data quality consideration
+        if max_possible_score < 50:
+            trend_status["trend_classification"] = f"Insufficient SMA Data (only {max_possible_score}/100 signals)"
+        elif scaled_trend_score >= 90:
             trend_status["trend_classification"] = "Very Strong Uptrend"
-        elif trend_score >= 70:
+        elif scaled_trend_score >= 70:
             trend_status["trend_classification"] = "Strong Uptrend"
-        elif trend_score >= 50:
+        elif scaled_trend_score >= 50:
             trend_status["trend_classification"] = "Moderate Uptrend"
-        elif trend_score >= 30:
+        elif scaled_trend_score >= 30:
             trend_status["trend_classification"] = "Weak Uptrend"
         else:
             trend_status["trend_classification"] = "No Clear Uptrend"
@@ -216,6 +373,7 @@ class ComprehensiveTechnicalAnalysis:
     ) -> Dict[str, Any]:
         """
         MCP-TRADER STYLE: Detailed relative strength with classifications
+        FIXED: Proper sigmoid normalization instead of broken linear formula
         """
         try:
             # Get data
@@ -245,8 +403,8 @@ class ComprehensiveTechnicalAnalysis:
                 # Relative performance
                 relative_performance = stock_return - benchmark_return
                 
-                # Convert to 1-100 RS score
-                rs_score = min(max(50 + relative_performance, 1), 99)
+                # FIXED: Use proper sigmoid normalization instead of broken linear formula
+                rs_score = self.normalize_relative_performance(relative_performance)
                 
                 # MCP-TRADER STYLE: Detailed classifications
                 if rs_score >= 80:
@@ -275,10 +433,72 @@ class ComprehensiveTechnicalAnalysis:
         except Exception as e:
             return {"error": f"Relative strength calculation failed: {str(e)}"}
     
+    def detect_triangle_patterns(self, df: pd.DataFrame) -> List[Dict]:
+        """FIXED triangle detection with proper slope analysis and R-squared validation"""
+        patterns = []
+        
+        if len(df) < 30:
+            return patterns
+            
+        recent_df = df.tail(30).copy()
+        
+        # Get price data with time index (days from start)
+        days = np.arange(len(recent_df))
+        highs = recent_df["High"].values
+        lows = recent_df["Low"].values
+        current_price = df["Close"].iloc[-1]
+        
+        # Calculate slopes with proper scaling
+        try:
+            # Resistance line (highs)
+            resistance_slope, resistance_intercept, resistance_r_squared, _, _ = linregress(days, highs)
+            resistance_slope_percent = (resistance_slope / current_price) * 100  # % per day
+            
+            # Support line (lows)  
+            support_slope, support_intercept, support_r_squared, _, _ = linregress(days, lows)
+            support_slope_percent = (support_slope / current_price) * 100  # % per day
+            
+            # Require good fit (R² > 0.3) for valid pattern
+            if resistance_r_squared > 0.3 and support_r_squared > 0.3:
+                
+                # Ascending Triangle: flat resistance, rising support
+                if abs(resistance_slope_percent) < 0.02 and support_slope_percent > 0.02:
+                    patterns.append({
+                        "type": "Ascending Triangle",
+                        "price_level": round(np.mean(highs[-5:]), 2),
+                        "confidence": "High" if min(resistance_r_squared, support_r_squared) > 0.5 else "Medium",
+                        "signal": "Bullish Breakout Expected"
+                    })
+                
+                # Descending Triangle: falling resistance, flat support  
+                elif abs(support_slope_percent) < 0.02 and resistance_slope_percent < -0.02:
+                    patterns.append({
+                        "type": "Descending Triangle",
+                        "price_level": round(np.mean(lows[-5:]), 2), 
+                        "confidence": "High" if min(resistance_r_squared, support_r_squared) > 0.5 else "Medium",
+                        "signal": "Bearish Breakdown Expected"
+                    })
+                
+                # Symmetrical Triangle: converging lines
+                elif (resistance_slope_percent < -0.01 and support_slope_percent > 0.01 and 
+                      abs(abs(resistance_slope_percent) - abs(support_slope_percent)) < 0.02):
+                    patterns.append({
+                        "type": "Symmetrical Triangle",
+                        "price_level": round(current_price, 2),
+                        "confidence": "High" if min(resistance_r_squared, support_r_squared) > 0.5 else "Medium",
+                        "signal": "Breakout Direction Unclear"
+                    })
+        
+        except Exception as e:
+            pass  # Skip if regression fails
+            
+        return patterns
+    
     def detect_advanced_patterns(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         MCP-TRADER MISSING: Advanced pattern recognition
         Detects double tops, double bottoms, and sophisticated patterns
+        ENHANCED: Dynamic ATR-based thresholds instead of hardcoded values
         """
         try:
             if len(df) < 60:
@@ -298,8 +518,11 @@ class ComprehensiveTechnicalAnalysis:
             minima = recent_df[recent_df["is_min"]].copy()
             maxima = recent_df[recent_df["is_max"]].copy()
             
-            # === DOUBLE BOTTOM DETECTION ===
+            # === DOUBLE BOTTOM DETECTION - DYNAMIC THRESHOLDS ===
             if len(minima) >= 2:
+                similarity_threshold = self.get_dynamic_threshold(recent_df, 3.0) / 100  # ATR-based
+                peak_threshold = 1.0 + (self.get_dynamic_threshold(recent_df, 5.0) / 100)
+                
                 for i in range(len(minima) - 1):
                     for j in range(i + 1, len(minima)):
                         price1 = minima.iloc[i]["Low"]
@@ -307,27 +530,30 @@ class ComprehensiveTechnicalAnalysis:
                         date1 = minima.iloc[i].name
                         date2 = minima.iloc[j].name
                         
-                        # Check if similar price levels (within 3%)
-                        if abs(price1 - price2) / price1 < 0.03:
+                        # Check if similar price levels - DYNAMIC threshold
+                        if abs(price1 - price2) / price1 < similarity_threshold:
                             # Check time separation (10-60 days)
                             days_apart = (date2 - date1).days
                             if 10 <= days_apart <= 60:
-                                # Check for peak in between (5%+ higher)
+                                # Check for peak in between - DYNAMIC threshold
                                 mask = (recent_df.index > date1) & (recent_df.index < date2)
                                 if mask.any():
                                     max_between = recent_df.loc[mask, "High"].max()
-                                    if max_between > price1 * 1.05:
+                                    if max_between > price1 * peak_threshold:
                                         patterns.append({
                                             "type": "Double Bottom",
                                             "start_date": date1.strftime("%Y-%m-%d"),
                                             "end_date": date2.strftime("%Y-%m-%d"),
                                             "price_level": round((price1 + price2) / 2, 2),
-                                            "confidence": "Medium",
+                                            "confidence": "High",  # Higher confidence with dynamic thresholds
                                             "signal": "Bullish Reversal"
                                         })
             
-            # === DOUBLE TOP DETECTION ===
+            # === DOUBLE TOP DETECTION - DYNAMIC THRESHOLDS ===
             if len(maxima) >= 2:
+                similarity_threshold = self.get_dynamic_threshold(recent_df, 3.0) / 100
+                valley_threshold = 1.0 - (self.get_dynamic_threshold(recent_df, 5.0) / 100)
+                
                 for i in range(len(maxima) - 1):
                     for j in range(i + 1, len(maxima)):
                         price1 = maxima.iloc[i]["High"]
@@ -335,51 +561,67 @@ class ComprehensiveTechnicalAnalysis:
                         date1 = maxima.iloc[i].name
                         date2 = maxima.iloc[j].name
                         
-                        if abs(price1 - price2) / price1 < 0.03:
+                        if abs(price1 - price2) / price1 < similarity_threshold:
                             days_apart = (date2 - date1).days
                             if 10 <= days_apart <= 60:
                                 mask = (recent_df.index > date1) & (recent_df.index < date2)
                                 if mask.any():
                                     min_between = recent_df.loc[mask, "Low"].min()
-                                    if min_between < price1 * 0.95:
+                                    if min_between < price1 * valley_threshold:
                                         patterns.append({
                                             "type": "Double Top",
                                             "start_date": date1.strftime("%Y-%m-%d"),
                                             "end_date": date2.strftime("%Y-%m-%d"),
                                             "price_level": round((price1 + price2) / 2, 2),
-                                            "confidence": "Medium",
+                                            "confidence": "High",  # Higher confidence with dynamic thresholds
                                             "signal": "Bearish Reversal"
                                         })
             
-            # === BREAKOUT PATTERNS ===
+            # === BREAKOUT PATTERNS - FIXED with ATR-based thresholds ===
             current_close = df["Close"].iloc[-1]
             recent_high_20 = df["High"].iloc[-20:].max()
             recent_low_20 = df["Low"].iloc[-20:].min()
-            
+
+            # Calculate ATR-based breakout thresholds - MUCH MORE RELIABLE
+            atr = df["atr"].iloc[-1] if "atr" in df.columns and pd.notnull(df["atr"].iloc[-1]) else None
+            if atr:
+                # Require 0.5 ATR above/below for valid breakout
+                breakout_buffer = atr * 0.5
+                resistance_threshold = recent_high_20 + breakout_buffer
+                support_threshold = recent_low_20 - breakout_buffer
+            else:
+                # Fallback: 1% threshold instead of 0.1% (much more reasonable)
+                resistance_threshold = recent_high_20 * 1.01
+                support_threshold = recent_low_20 * 0.99
+
             # Resistance breakout
-            if current_close > recent_high_20 * 0.999:
+            if current_close > resistance_threshold:
                 patterns.append({
                     "type": "Resistance Breakout",
                     "price_level": round(recent_high_20, 2),
-                    "confidence": "Medium",
+                    "confidence": "High" if atr else "Medium",
                     "signal": "Bullish Continuation"
                 })
-            
-            # Support breakdown
-            if current_close < recent_low_20 * 1.001:
+
+            # Support breakdown  
+            if current_close < support_threshold:
                 patterns.append({
-                    "type": "Support Breakdown",
+                    "type": "Support Breakdown", 
                     "price_level": round(recent_low_20, 2),
-                    "confidence": "Medium",
+                    "confidence": "High" if atr else "Medium",
                     "signal": "Bearish Continuation"
                 })
             
-            # === ENHANCED: Near Support/Resistance Detection (from enhanced_technical.py) ===
+            # === ENHANCED: Near Support/Resistance Detection ===
             resistance_distance = (recent_high_20 - current_close) / current_close
             support_distance = (current_close - recent_low_20) / current_close
             
-            # Near resistance (1-3% below resistance)
-            if 0.01 < resistance_distance < 0.03:
+            # Dynamic near thresholds based on volatility
+            near_threshold_low = self.get_dynamic_threshold(df, 1.0) / 100
+            near_threshold_high = self.get_dynamic_threshold(df, 3.0) / 100
+            
+            # Near resistance - DYNAMIC thresholds
+            if near_threshold_low < resistance_distance < near_threshold_high:
                 patterns.append({
                     "type": "Near Resistance",
                     "price_level": round(recent_high_20, 2),
@@ -387,8 +629,8 @@ class ComprehensiveTechnicalAnalysis:
                     "signal": "Watch for breakout"
                 })
             
-            # Near support (1-3% above support)
-            if 0.01 < support_distance < 0.03:
+            # Near support - DYNAMIC thresholds
+            if near_threshold_low < support_distance < near_threshold_high:
                 patterns.append({
                     "type": "Near Support",
                     "price_level": round(recent_low_20, 2), 
@@ -396,8 +638,11 @@ class ComprehensiveTechnicalAnalysis:
                     "signal": "Watch for bounce"
                 })
             
-            # === NEW: HEAD & SHOULDERS PATTERN DETECTION ===
+            # === NEW: HEAD & SHOULDERS PATTERN DETECTION - DYNAMIC THRESHOLDS ===
             if len(maxima) >= 3:
+                shoulder_similarity_threshold = self.get_dynamic_threshold(recent_df, 5.0) / 100
+                head_prominence_threshold = 1.0 + (self.get_dynamic_threshold(recent_df, 3.0) / 100)
+                
                 # Look for Head & Shoulders pattern in last 3 peaks
                 for i in range(len(maxima) - 2):
                     left_shoulder = maxima.iloc[i]["High"]
@@ -406,11 +651,11 @@ class ComprehensiveTechnicalAnalysis:
                     
                     # Head should be higher than both shoulders
                     if head > left_shoulder and head > right_shoulder:
-                        # Shoulders should be roughly equal (within 5%)
+                        # Shoulders should be roughly equal - DYNAMIC threshold
                         shoulder_diff = abs(left_shoulder - right_shoulder) / left_shoulder
-                        if shoulder_diff < 0.05:
-                            # Head should be significantly higher (at least 3%)
-                            if head > left_shoulder * 1.03:
+                        if shoulder_diff < shoulder_similarity_threshold:
+                            # Head should be significantly higher - DYNAMIC threshold
+                            if head > left_shoulder * head_prominence_threshold:
                                 patterns.append({
                                     "type": "Head and Shoulders",
                                     "price_level": round((left_shoulder + right_shoulder) / 2, 2),
@@ -418,8 +663,11 @@ class ComprehensiveTechnicalAnalysis:
                                     "signal": "Bearish Reversal"
                                 })
             
-            # === NEW: INVERSE HEAD & SHOULDERS PATTERN ===
+            # === NEW: INVERSE HEAD & SHOULDERS PATTERN - DYNAMIC THRESHOLDS ===
             if len(minima) >= 3:
+                shoulder_similarity_threshold = self.get_dynamic_threshold(recent_df, 5.0) / 100
+                head_prominence_threshold = 1.0 - (self.get_dynamic_threshold(recent_df, 3.0) / 100)
+                
                 for i in range(len(minima) - 2):
                     left_shoulder = minima.iloc[i]["Low"]
                     head = minima.iloc[i + 1]["Low"]
@@ -427,11 +675,11 @@ class ComprehensiveTechnicalAnalysis:
                     
                     # Head should be lower than both shoulders
                     if head < left_shoulder and head < right_shoulder:
-                        # Shoulders should be roughly equal (within 5%)
+                        # Shoulders should be roughly equal - DYNAMIC threshold
                         shoulder_diff = abs(left_shoulder - right_shoulder) / left_shoulder
-                        if shoulder_diff < 0.05:
-                            # Head should be significantly lower (at least 3%)
-                            if head < left_shoulder * 0.97:
+                        if shoulder_diff < shoulder_similarity_threshold:
+                            # Head should be significantly lower - DYNAMIC threshold
+                            if head < left_shoulder * head_prominence_threshold:
                                 patterns.append({
                                     "type": "Inverse Head and Shoulders",
                                     "price_level": round((left_shoulder + right_shoulder) / 2, 2),
@@ -439,65 +687,48 @@ class ComprehensiveTechnicalAnalysis:
                                     "signal": "Bullish Reversal"
                                 })
             
-            # === NEW: TRIANGLE PATTERN DETECTION ===
-            if len(recent_df) >= 30:
-                # Get highs and lows from recent data
-                highs = recent_df["High"].values
-                lows = recent_df["Low"].values
-                
-                # Check for ascending triangle (horizontal resistance, rising support)
-                recent_highs = highs[-10:]
-                recent_lows = lows[-10:]
-                
-                # Ascending Triangle: resistance flat, support rising
-                resistance_trend = np.polyfit(range(len(recent_highs)), recent_highs, 1)[0]
-                support_trend = np.polyfit(range(len(recent_lows)), recent_lows, 1)[0]
-                
-                if abs(resistance_trend) < 0.1 and support_trend > 0.2:
-                    patterns.append({
-                        "type": "Ascending Triangle",
-                        "price_level": round(np.mean(recent_highs), 2),
-                        "confidence": "Medium",
-                        "signal": "Bullish Breakout Expected"
-                    })
-                
-                # Descending Triangle: support flat, resistance falling
-                elif abs(support_trend) < 0.1 and resistance_trend < -0.2:
-                    patterns.append({
-                        "type": "Descending Triangle", 
-                        "price_level": round(np.mean(recent_lows), 2),
-                        "confidence": "Medium",
-                        "signal": "Bearish Breakdown Expected"
-                    })
-                
-                # Symmetrical Triangle: both converging
-                elif resistance_trend < -0.1 and support_trend > 0.1:
-                    patterns.append({
-                        "type": "Symmetrical Triangle",
-                        "price_level": round((np.mean(recent_highs) + np.mean(recent_lows)) / 2, 2),
-                        "confidence": "Medium", 
-                        "signal": "Breakout Direction Unclear"
-                    })
+            # === ENHANCED: TRIANGLE PATTERN DETECTION ===
+            triangle_patterns = self.detect_triangle_patterns(df)
+            patterns.extend(triangle_patterns)
             
-            # === NEW: WEDGE PATTERN DETECTION ===
+            # === WEDGE PATTERN DETECTION - Use proper slope data ===
             if len(recent_df) >= 20:
-                # Rising Wedge: both rising but resistance rises faster
-                if resistance_trend > 0 and support_trend > 0 and resistance_trend > support_trend * 1.5:
-                    patterns.append({
-                        "type": "Rising Wedge",
-                        "price_level": round(current_close, 2),
-                        "confidence": "Medium",
-                        "signal": "Bearish Reversal Expected"
-                    })
-                
-                # Falling Wedge: both falling but support falls faster  
-                elif resistance_trend < 0 and support_trend < 0 and support_trend < resistance_trend * 1.5:
-                    patterns.append({
-                        "type": "Falling Wedge",
-                        "price_level": round(current_close, 2),
-                        "confidence": "Medium",
-                        "signal": "Bullish Reversal Expected"
-                    })
+                try:
+                    # Get slope data from triangle detection logic
+                    days = np.arange(len(recent_df.tail(20)))
+                    highs = recent_df.tail(20)["High"].values
+                    lows = recent_df.tail(20)["Low"].values
+                    current_price = df["Close"].iloc[-1]
+                    
+                    resistance_slope, _, resistance_r_squared, _, _ = linregress(days, highs)
+                    support_slope, _, support_r_squared, _, _ = linregress(days, lows)
+                    
+                    resistance_slope_percent = (resistance_slope / current_price) * 100
+                    support_slope_percent = (support_slope / current_price) * 100
+                    
+                    # Require decent fit for wedge patterns
+                    if resistance_r_squared > 0.2 and support_r_squared > 0.2:
+                        # Rising Wedge: both rising but resistance rises faster
+                        if (resistance_slope_percent > 0.01 and support_slope_percent > 0.01 and 
+                            resistance_slope_percent > support_slope_percent * 1.5):
+                            patterns.append({
+                                "type": "Rising Wedge",
+                                "price_level": round(current_price, 2),
+                                "confidence": "High" if min(resistance_r_squared, support_r_squared) > 0.4 else "Medium",
+                                "signal": "Bearish Reversal Expected"
+                            })
+                        
+                        # Falling Wedge: both falling but support falls faster  
+                        elif (resistance_slope_percent < -0.01 and support_slope_percent < -0.01 and 
+                              abs(support_slope_percent) > abs(resistance_slope_percent) * 1.5):
+                            patterns.append({
+                                "type": "Falling Wedge",
+                                "price_level": round(current_price, 2),
+                                "confidence": "High" if min(resistance_r_squared, support_r_squared) > 0.4 else "Medium",
+                                "signal": "Bullish Reversal Expected"
+                            })
+                except:
+                    pass  # Skip if slope calculation fails
             
             return {"patterns": patterns}
             
@@ -516,7 +747,10 @@ class ComprehensiveTechnicalAnalysis:
             latest_close = df["Close"].iloc[-1]
             
             # Calculate ATR for ATR-based stops
-            atr = df["atr"].iloc[-1] if "atr" in df.columns else (df["High"] - df["Low"]).rolling(14).mean().iloc[-1]
+            if "atr" in df.columns:
+                atr = df["atr"].iloc[-1]
+            else:
+                atr = (df["High"] - df["Low"]).rolling(14).mean().iloc[-1]
             
             stops = {
                 # === ATR-BASED STOPS (MCP-trader style) ===
@@ -530,9 +764,9 @@ class ComprehensiveTechnicalAnalysis:
                 "percent_8_wide": round(latest_close * 0.92, 2),
                 
                 # === SMA-BASED STOPS ===
-                "sma_20_support": round(df["sma_20"].iloc[-1], 2) if "sma_20" in df.columns else None,
-                "sma_50_support": round(df["sma_50"].iloc[-1], 2) if "sma_50" in df.columns else None,
-                "sma_200_support": round(df["sma_200"].iloc[-1], 2) if "sma_200" in df.columns else None,
+                "sma_20_support": round(df["sma_20"].iloc[-1], 2) if "sma_20" in df.columns and pd.notnull(df["sma_20"].iloc[-1]) else None,
+                "sma_50_support": round(df["sma_50"].iloc[-1], 2) if "sma_50" in df.columns and pd.notnull(df["sma_50"].iloc[-1]) else None,
+                "sma_200_support": round(df["sma_200"].iloc[-1], 2) if "sma_200" in df.columns and pd.notnull(df["sma_200"].iloc[-1]) else None,
                 
                 # === TECHNICAL SUPPORT STOPS ===
                 "recent_swing_low": round(df["Low"].iloc[-20:].min(), 2),
@@ -540,7 +774,8 @@ class ComprehensiveTechnicalAnalysis:
             }
             
             # Calculate risk percentages for each stop
-            for stop_name, stop_price in stops.items():
+            stop_items = list(stops.items())  # Create a copy to avoid iteration issues
+            for stop_name, stop_price in stop_items:
                 if stop_price and stop_price > 0:
                     risk_pct = ((latest_close - stop_price) / latest_close) * 100
                     stops[f"{stop_name}_risk_pct"] = round(risk_pct, 2)
@@ -555,11 +790,12 @@ class ComprehensiveTechnicalAnalysis:
         current_price: float,
         stop_price: float,
         account_size: float = 100000,
-        risk_per_trade: float = 1000,
-        max_risk_percent: float = 2.0
+        risk_per_trade: float = 500,     # REDUCED from 1000 for safer defaults
+        max_risk_percent: float = 1.0    # REDUCED from 2.0 for safer defaults
     ) -> Dict[str, Any]:
         """
         MCP-TRADER STYLE: Position sizing with multiple approaches
+        ENHANCED: Safer default risk parameters and warnings
         """
         try:
             if current_price <= 0 or account_size <= 0:
@@ -567,6 +803,12 @@ class ComprehensiveTechnicalAnalysis:
             
             if current_price <= stop_price:
                 return {"error": "Stop price must be below current price"}
+            
+            # RISK WARNINGS for user safety
+            if max_risk_percent > 2.0:
+                console.print("⚠️ Warning: Risk >2% per trade is aggressive. Consider 0.5-1%")
+            if risk_per_trade / account_size > 0.02:
+                console.print(f"⚠️ Warning: ${risk_per_trade} risk = {risk_per_trade/account_size*100:.1f}% of account")
             
             # Risk per share
             risk_per_share = current_price - stop_price
@@ -604,22 +846,166 @@ class ComprehensiveTechnicalAnalysis:
         except Exception as e:
             return {"error": f"Position sizing failed: {str(e)}"}
     
+    def _calculate_technical_score(
+        self, 
+        volume_profile: Dict, 
+        rs_analysis: Dict, 
+        patterns: Dict,
+        current_price: float
+    ) -> float:
+        """
+        Calculate overall technical score (0-1) - ENHANCED with multi-period RS
+        Combines Volume Profile (25%) + Multi-Period Relative Strength (50%) + Patterns (25%)
+        FIXED: More balanced weighting and uses all RS periods instead of just RS_63d
+        """
+        try:
+            score = 0.0
+            max_score = 0.0
+            
+            # Volume profile score (25% weight - more objective than patterns)
+            if "point_of_control" in volume_profile and "value_area_low" in volume_profile:
+                poc = volume_profile["point_of_control"]
+                va_low = volume_profile["value_area_low"]
+                va_high = volume_profile["value_area_high"]
+                
+                # Score based on price position relative to volume areas
+                if va_low <= current_price <= va_high:
+                    score += 0.15  # In value area (reduced from 0.2)
+                if current_price > poc:
+                    score += 0.10  # Above POC
+                    
+            max_score += 0.25  # Reduced from 0.3
+            
+            # Multi-period Relative Strength (50% weight - most important for stock selection)
+            rs_periods = ["RS_21d", "RS_63d", "RS_126d", "RS_252d"]
+            rs_weights = [0.10, 0.15, 0.15, 0.10]  # Favor medium-term (63d, 126d)
+            
+            for period, weight in zip(rs_periods, rs_weights):
+                if period in rs_analysis:
+                    rs_score = rs_analysis[period]["score"]
+                    if rs_score > 75:
+                        score += weight * 1.0  # Excellent RS
+                    elif rs_score > 65:
+                        score += weight * 0.8  # Strong RS
+                    elif rs_score > 55:
+                        score += weight * 0.6  # Good RS
+                    elif rs_score > 45:
+                        score += weight * 0.4  # Neutral RS
+                    elif rs_score > 35:
+                        score += weight * 0.2  # Weak RS
+                    # Below 35 = 0 points
+            max_score += 0.50  # Increased from 0.4
+            
+            # Pattern score (25% weight - subjective but important)
+            bullish_patterns = ["Resistance Breakout", "Near Resistance", "Inverse Head and Shoulders", 
+                               "Ascending Triangle", "Falling Wedge", "Double Bottom"]
+            bearish_patterns = ["Head and Shoulders", "Descending Triangle", "Rising Wedge", 
+                               "Double Top", "Support Breakdown"]
+            
+            pattern_score = 0.0
+            if patterns and "patterns" in patterns:
+                for pattern in patterns["patterns"]:
+                    pattern_type = pattern.get("type")
+                    confidence = pattern.get("confidence")
+                    
+                    if pattern_type in bullish_patterns:
+                        if confidence == "High":
+                            pattern_score += 0.15  # Reduced individual impact
+                        else:
+                            pattern_score += 0.08
+                    elif pattern_type in bearish_patterns:
+                        # Bearish patterns reduce score
+                        if confidence == "High":
+                            pattern_score -= 0.08  # Less negative impact
+                        else:
+                            pattern_score -= 0.04
+            
+            # Cap pattern score between -0.1 and +0.25
+            pattern_score = max(-0.10, min(0.25, pattern_score))
+            score += pattern_score
+            max_score += 0.25  # Reduced from 0.3
+            
+            return round(score / max_score if max_score > 0 else 0, 3)
+            
+        except Exception as e:
+            return 0.0
+    
+    def analyze_score_distribution(self, qualifying_stocks: List[Dict]) -> None:
+        """Print score distribution to help users set appropriate thresholds"""
+        if not qualifying_stocks:
+            return
+            
+        scores = [s.get("technical_score", 0) * 100 for s in qualifying_stocks]
+        
+        console.print(f"\n📊 [bold blue]Technical Score Distribution:[/bold blue]")
+        console.print(f"   Mean: {np.mean(scores):.1f}%")
+        console.print(f"   Median: {np.median(scores):.1f}%") 
+        console.print(f"   75th percentile: {np.percentile(scores, 75):.1f}%")
+        console.print(f"   90th percentile: {np.percentile(scores, 90):.1f}%")
+        console.print(f"   💡 Consider --min-score {np.percentile(scores, 75)/100:.2f} for top 25%")
+    
+    def calculate_sma150_slope(self, df: pd.DataFrame, lookback_days: int) -> Optional[float]:
+        """Calculate SMA150 slope over specified period"""
+        try:
+            if len(df) < 160:  # Need enough data for SMA150
+                return None
+                
+            df["sma150"] = ta.sma(df["Close"], length=150)
+            df = df.dropna(subset=["sma150"])
+            
+            if len(df) < 2:
+                return None
+                
+            end_date = df.index[-1]
+            start_cutoff = end_date - timedelta(days=lookback_days)
+            start_rows = df[df.index <= start_cutoff]
+            
+            if start_rows.empty:
+                return None
+                
+            sma_then = start_rows["sma150"].iloc[0]
+            sma_now = df["sma150"].iloc[-1]
+            
+            if sma_then <= 0:
+                return None
+                
+            return (sma_now - sma_then) / sma_then * 100
+            
+        except Exception as e:
+            console.print(f"⚠️ Error calculating SMA150 slope: {str(e)}")
+            return None
+
     def comprehensive_stock_analysis(
         self,
         symbol: str,
         benchmark: str = "SPY",
         account_size: float = 100000,
-        risk_per_trade: float = 1000
+        risk_per_trade: float = 500,
+        uptrend_period: Optional[str] = None,
+        min_slope_pct: float = 0
     ) -> Dict[str, Any]:
         """
         Complete MCP-trader style analysis of a single stock
+        ENHANCED: Uses configurable strategy weights and improved scoring
         """
         try:
-            console.print(f"\n🔍 [bold cyan]Comprehensive Analysis: {symbol}[/bold cyan]")
+            console.print(f"\n🔍 [bold cyan]Comprehensive Analysis: {symbol} (Strategy: {self.strategy})[/bold cyan]")
             
-            # Fetch 6 months of data
+            # Calculate required days for data fetch
+            max_period = 365  # Base period for SMA200
+            if uptrend_period:
+                # Parse period for uptrend check
+                m = re.match(r"(\d+)([a-zA-Z]+)", uptrend_period)
+                if m:
+                    n, unit = int(m.group(1)), m.group(2).lower()
+                    if unit.startswith("y"):
+                        max_period = max(max_period, n * 365)
+                    elif unit.startswith("m"):
+                        max_period = max(max_period, n * 30)
+            
+            # Fetch data once for all analysis
             ticker = yf.Ticker(symbol)
-            df = ticker.history(period="6mo")
+            df = ticker.history(period=f"{max_period+200}d")  # +200 for SMA warmup
             
             if df.empty:
                 return {"error": f"No data available for {symbol}"}
@@ -627,25 +1013,38 @@ class ComprehensiveTechnicalAnalysis:
             # Add all technical indicators
             df = self.add_comprehensive_indicators(df)
             
+            # Calculate SMA150 slope if uptrend period specified
+            sma150_slope = None
+            if uptrend_period:
+                m = re.match(r"(\d+)([a-zA-Z]+)", uptrend_period)
+                if m:
+                    n, unit = int(m.group(1)), m.group(2).lower()
+                    days = n * 365 if unit.startswith("y") else n * 30
+                    sma150_slope = self.calculate_sma150_slope(df, days)
+                    
+                    # Early return if slope requirement not met
+                    if sma150_slope is None or sma150_slope < min_slope_pct:
+                        return {"error": f"SMA150 slope {sma150_slope:.1f}% < required {min_slope_pct}%"}
+            
             current_price = df["Close"].iloc[-1]
             
-            # 1. Volume Profile Analysis (NEW from enhanced_technical.py)
+            # 1. Volume Profile Analysis (FIXED double-counting)
             volume_profile_analyzer = VolumeProfileAnalysis()
             volume_profile = volume_profile_analyzer.analyze_volume_profile(df)
             
-            # 2. Trend Status Analysis
+            # 2. Trend Status Analysis (with strategy-specific weights)
             trend_analysis = self.analyze_trend_status(df)
             
-            # 3. Relative Strength Analysis
+            # 3. Relative Strength Analysis (with fixed normalization)
             rs_analysis = self.calculate_relative_strength_detailed(symbol, benchmark)
             
-            # 4. Advanced Pattern Recognition
+            # 4. Advanced Pattern Recognition (with dynamic thresholds)
             pattern_analysis = self.detect_advanced_patterns(df)
             
             # 5. Multiple Stop Loss Suggestions
             stop_analysis = self.suggest_multiple_stops(df)
             
-            # 6. Position Sizing (using best ATR stop)
+            # 6. Position Sizing (using best ATR stop with safer defaults)
             if "atr_2x_moderate" in stop_analysis:
                 position_analysis = self.calculate_position_sizing(
                     current_price, stop_analysis["atr_2x_moderate"], 
@@ -654,7 +1053,7 @@ class ComprehensiveTechnicalAnalysis:
             else:
                 position_analysis = {"error": "Cannot calculate position sizing"}
             
-            # 7. Technical Score Calculation (NEW from enhanced_technical.py)
+            # 7. Technical Score Calculation (ENHANCED multi-period)
             technical_score = self._calculate_technical_score(
                 volume_profile, rs_analysis, pattern_analysis, current_price
             )
@@ -664,19 +1063,21 @@ class ComprehensiveTechnicalAnalysis:
             volume_ratio = df["volume_ratio"].iloc[-1] if "volume_ratio" in df.columns else None
             
             # Compile comprehensive results
-            return {
+            analysis = {
                 "symbol": symbol,
                 "current_price": round(current_price, 2),
                 "analysis_date": datetime.now().isoformat(),
+                "strategy": self.strategy,
+                "benchmark": benchmark,  # Add benchmark to analysis dictionary
                 
                 # Core analyses
-                "volume_profile": volume_profile,  # NEW: Volume profile analysis
-                "trend_analysis": trend_analysis,
-                "relative_strength": rs_analysis,
-                "pattern_analysis": pattern_analysis,
+                "volume_profile": volume_profile,  # FIXED: Volume profile analysis
+                "trend_analysis": trend_analysis,  # ENHANCED: Strategy-specific weights
+                "relative_strength": rs_analysis,  # FIXED: Proper normalization
+                "pattern_analysis": pattern_analysis,  # ENHANCED: Dynamic thresholds
                 "stop_analysis": stop_analysis,
-                "position_analysis": position_analysis,
-                "technical_score": technical_score,  # NEW: Overall technical score
+                "position_analysis": position_analysis,  # ENHANCED: Safer defaults
+                "technical_score": technical_score,  # ENHANCED: Multi-period scoring
                 
                 # Key metrics (with null checks)
                 "volatility_adrp": round(adrp, 2) if adrp is not None and pd.notnull(adrp) else None,
@@ -689,344 +1090,109 @@ class ComprehensiveTechnicalAnalysis:
                 "sma_200": round(df["sma_200"].iloc[-1], 2) if "sma_200" in df.columns and pd.notnull(df["sma_200"].iloc[-1]) else None,
             }
             
+            # Add SMA150 slope to results if calculated
+            if sma150_slope is not None:
+                analysis["sma150_slope"] = round(sma150_slope, 2)
+            
+            return analysis
+            
         except Exception as e:
             return {"error": f"Analysis failed for {symbol}: {str(e)}"}
-    
-    def _calculate_technical_score(
-        self, 
-        volume_profile: Dict, 
-        rs_analysis: Dict, 
-        patterns: Dict,
-        current_price: float
-    ) -> float:
-        """
-        Calculate overall technical score (0-1) from enhanced_technical.py
-        Combines Volume Profile (30%) + Relative Strength (40%) + Patterns (30%)
-        """
-        try:
-            score = 0.0
-            max_score = 0.0
-            
-            # Volume profile score (0.3 weight)
-            if "point_of_control" in volume_profile and "value_area_low" in volume_profile:
-                poc = volume_profile["point_of_control"]
-                va_low = volume_profile["value_area_low"]
-                va_high = volume_profile["value_area_high"]
-                
-                # Score based on price position relative to volume areas
-                if va_low <= current_price <= va_high:
-                    score += 0.2  # In value area
-                if current_price > poc:
-                    score += 0.1  # Above POC
-                    
-            max_score += 0.3
-            
-            # Relative strength score (0.4 weight)
-            if "RS_63d" in rs_analysis:
-                rs_63d = rs_analysis["RS_63d"]["score"]
-                if rs_63d > 70:
-                    score += 0.4
-                elif rs_63d > 60:
-                    score += 0.3
-                elif rs_63d > 50:
-                    score += 0.2
-            max_score += 0.4
-            
-            # Pattern score (0.3 weight)
-            bullish_patterns = ["Resistance Breakout", "Near Resistance", "Inverse Head and Shoulders", 
-                               "Ascending Triangle", "Falling Wedge"]
-            bearish_patterns = ["Head and Shoulders", "Descending Triangle", "Rising Wedge"]
-            
-            if patterns and "patterns" in patterns:
-                for pattern in patterns["patterns"]:
-                    pattern_type = pattern.get("type")
-                    confidence = pattern.get("confidence")
-                    
-                    if pattern_type in bullish_patterns:
-                        if confidence == "High":
-                            score += 0.2
-                        else:
-                            score += 0.1
-                    elif pattern_type in bearish_patterns:
-                        # Bearish patterns reduce score
-                        if confidence == "High":
-                            score -= 0.1
-                        else:
-                            score -= 0.05
-            
-            max_score += 0.3
-            
-            return round(score / max_score if max_score > 0 else 0, 3)
-            
-        except Exception as e:
-            return 0.0
 
-def print_comprehensive_analysis(analysis: Dict[str, Any]):
-    """Print comprehensive analysis results in a beautiful format"""
-    if "error" in analysis:
-        console.print(f"❌ [red]Error: {analysis['error']}[/red]")
-        return
-    
-    symbol = analysis["symbol"]
-    current_price = analysis["current_price"]
-    
-    # Header
-    console.print(Panel(
-        f"[bold blue]Comprehensive Technical Analysis: {symbol}[/bold blue]\n"
-        f"Current Price: ${current_price}\n"
-        f"Analysis Time: {analysis['analysis_date'][:19]}",
-        title="MCP-Style Analysis", border_style="blue"
-    ))
-    
-    # === TREND ANALYSIS ===
-    trend = analysis["trend_analysis"]
-    console.print(f"\n📈 [bold green]TREND STATUS ANALYSIS[/bold green]")
-    console.print(f"   Trend Strength: {trend.get('trend_strength', 0)}/100 - {trend.get('trend_classification', 'Unknown')}")
-    console.print(f"   Above 20 SMA: {'✅' if trend.get('above_20sma') else '❌'}")
-    console.print(f"   Above 50 SMA: {'✅' if trend.get('above_50sma') else '❌'}")
-    console.print(f"   Above 200 SMA: {'✅' if trend.get('above_200sma') else '❌'}")
-    console.print(f"   20/50 Bullish Cross: {'✅' if trend.get('20_50_bullish') else '❌'}")
-    console.print(f"   50/200 Bullish Cross: {'✅' if trend.get('50_200_bullish') else '❌'}")
-    if "macd_bullish" in trend:
-        console.print(f"   MACD Bullish: {'✅' if trend.get('macd_bullish') else '❌'}")
-    
-    # === VOLATILITY & VOLUME ===
-    console.print(f"\n📊 [bold yellow]VOLATILITY & VOLUME ANALYSIS[/bold yellow]")
-    adrp = analysis.get("volatility_adrp")
-    volume_ratio = analysis.get("volume_ratio")
-    if adrp:
-        volatility_desc = "High" if adrp > 5 else "Normal" if adrp > 2 else "Low"
-        console.print(f"   ADRP (Volatility): {adrp:.2f}% ({volatility_desc})")
-    if volume_ratio:
-        volume_desc = "High" if volume_ratio > 1.5 else "Normal" if volume_ratio > 0.8 else "Low"
-        console.print(f"   Volume Ratio: {volume_ratio:.2f}x ({volume_desc})")
-    
-    # === VOLUME PROFILE (NEW) ===
-    volume_profile = analysis.get("volume_profile", {})
-    if "point_of_control" in volume_profile:
-        console.print(f"\n🎯 [bold blue]VOLUME PROFILE ANALYSIS[/bold blue]")
-        poc = volume_profile["point_of_control"]
-        va_low = volume_profile.get("value_area_low")
-        va_high = volume_profile.get("value_area_high")
-        
-        console.print(f"   Point of Control (POC): ${poc:.2f}")
-        if va_low and va_high:
-            console.print(f"   Value Area: ${va_low:.2f} - ${va_high:.2f}")
-            if va_low <= current_price <= va_high:
-                console.print(f"   ✅ Price is in Value Area (institutional interest zone)")
-            else:
-                console.print(f"   ⚠️ Price outside Value Area")
-        
-        if current_price > poc:
-            console.print(f"   ✅ Price above POC (bullish)")
-        else:
-            console.print(f"   ❌ Price below POC")
-    
-    # === TECHNICAL SCORE (NEW) ===
-    technical_score = analysis.get("technical_score")
-    if technical_score is not None:
-        score_pct = technical_score * 100
-        if score_pct >= 70:
-            score_desc = "Strong"
-            score_color = "green"
-        elif score_pct >= 50:
-            score_desc = "Moderate" 
-            score_color = "yellow"
-        elif score_pct >= 30:
-            score_desc = "Weak"
-            score_color = "red"
-        else:
-            score_desc = "Very Weak"
-            score_color = "red"
-        
-        console.print(f"\n🎯 [bold {score_color}]OVERALL TECHNICAL SCORE: {score_pct:.1f}% ({score_desc})[/bold {score_color}]")
-        console.print(f"   Combines: Volume Profile (30%) + Relative Strength (40%) + Patterns (30%)")
-    
-    # === RELATIVE STRENGTH ===
-    rs = analysis["relative_strength"]
-    if "error" not in rs:
-        console.print(f"\n💪 [bold magenta]RELATIVE STRENGTH vs SPY[/bold magenta]")
-        for period, data in rs.items():
-            if period.startswith("RS_"):
-                days = period.split("_")[1]
-                console.print(f"   {days}: {data['score']:.1f} - {data['classification']}")
-                console.print(f"       Stock: {data['stock_return']:+.1f}% | SPY: {data['benchmark_return']:+.1f}% | Excess: {data['excess_return']:+.1f}%")
-    
-    # === PATTERN ANALYSIS ===
-    patterns = analysis["pattern_analysis"]["patterns"]
-    console.print(f"\n🔍 [bold cyan]PATTERN RECOGNITION[/bold cyan]")
-    if patterns:
-        for pattern in patterns:
-            signal_color = "green" if "Bullish" in pattern.get("signal", "") else "red"
-            console.print(f"   [{signal_color}]{pattern['type']}[/{signal_color}]: ${pattern['price_level']} ({pattern.get('signal', 'Unknown')})")
-    else:
-        console.print("   No significant patterns detected")
-    
-    # === STOP LOSS ANALYSIS ===
-    stops = analysis["stop_analysis"]
-    if "error" not in stops:
-        console.print(f"\n🛡️  [bold red]STOP LOSS SUGGESTIONS[/bold red]")
-        console.print("   ATR-Based Stops:")
-        for stop_type in ["atr_1x_conservative", "atr_2x_moderate", "atr_3x_aggressive"]:
-            if stop_type in stops:
-                risk_key = f"{stop_type}_risk_pct"
-                risk = stops.get(risk_key, 0)
-                console.print(f"     {stop_type.replace('_', ' ').title()}: ${stops[stop_type]} ({risk:.1f}% risk)")
-        
-        console.print("   Percentage-Based Stops:")
-        for stop_type in ["percent_2_tight", "percent_5_moderate", "percent_8_wide"]:
-            if stop_type in stops:
-                console.print(f"     {stop_type.replace('_', ' ').title()}: ${stops[stop_type]}")
-    
-    # === POSITION SIZING ===
-    position = analysis["position_analysis"]
-    if "error" not in position:
-        console.print(f"\n💰 [bold green]POSITION SIZING RECOMMENDATION[/bold green]")
-        console.print(f"   Recommended Shares: {position['recommended_shares']}")
-        console.print(f"   Position Cost: ${position['position_cost']:,.2f}")
-        console.print(f"   Risk Amount: ${position['actual_risk']:.2f} ({position['account_risk_pct']:.2f}% of account)")
-        console.print(f"   Risk/Reward Targets:")
-        targets = position["risk_reward_targets"]
-        console.print(f"     R1 (1:1): ${targets['r1_target']:.2f}")
-        console.print(f"     R2 (2:1): ${targets['r2_target']:.2f}")
-        console.print(f"     R3 (3:1): ${targets['r3_target']:.2f}")
-
-def analyze_multiple_stocks(symbols: List[str], benchmark: str = "SPY"):
-    """Analyze multiple stocks and create a comparison table"""
-    console.print(f"\n🔍 [bold blue]Multi-Stock MCP-Style Analysis[/bold blue]")
-    console.print(f"Analyzing {len(symbols)} stocks vs {benchmark}")
-    
+def passes_sma150_uptrend(symbol, uptrend_period, min_slope_pct):
+    """This function is deprecated - use ComprehensiveTechnicalAnalysis.calculate_sma150_slope instead"""
     analyzer = ComprehensiveTechnicalAnalysis()
-    results = []
-    
-    for symbol in symbols:
-        console.print(f"\n📊 Processing {symbol}...")
-        analysis = analyzer.comprehensive_stock_analysis(symbol, benchmark)
-        results.append(analysis)
-    
-    # Create comparison table
-    table = Table(title="Technical Analysis Comparison", show_header=True)
-    table.add_column("Symbol", style="cyan")
-    table.add_column("Price", style="green")
-    table.add_column("Trend Score", style="yellow")
-    table.add_column("RSI", style="magenta")
-    table.add_column("ADRP", style="blue")
-    table.add_column("Volume", style="white")
-    table.add_column("Pattern", style="red")
-    table.add_column("RS 63d", style="green")
-    
-    for analysis in results:
-        if "error" in analysis:
-            continue
-            
-        symbol = analysis["symbol"]
-        price = f"${analysis['current_price']:.2f}"
-        trend_score = f"{analysis['trend_analysis'].get('trend_strength', 0)}/100"
-        rsi = f"{analysis.get('rsi', 0):.1f}" if analysis.get('rsi') else "N/A"
-        adrp = f"{analysis.get('volatility_adrp', 0):.2f}%" if analysis.get('volatility_adrp') else "N/A"
-        volume = f"{analysis.get('volume_ratio', 1):.2f}x" if analysis.get('volume_ratio') else "N/A"
-        
-        # Get primary pattern
-        patterns = analysis["pattern_analysis"]["patterns"]
-        pattern = patterns[0]["type"] if patterns else "None"
-        
-        # Get 63-day RS
-        rs_63d = "N/A"
-        if "RS_63d" in analysis["relative_strength"]:
-            rs_score = analysis["relative_strength"]["RS_63d"]["score"]
-            rs_63d = f"{rs_score:.1f}"
-        
-        table.add_row(symbol, price, trend_score, rsi, adrp, volume, pattern, rs_63d)
-    
-    console.print(table)
-
-def main():
-    """Main function for command-line usage"""
-    parser = argparse.ArgumentParser(description="MCP-Style Comprehensive Technical Analyzer")
-    parser.add_argument("symbols", nargs="*", help="Stock symbols to analyze (e.g., AAPL NVDA TSLA)")
-    parser.add_argument("--benchmark", default="SPY", help="Benchmark for relative strength (default: SPY)")
-    parser.add_argument("--account-size", type=float, default=100000, help="Account size for position sizing")
-    parser.add_argument("--risk-per-trade", type=float, default=1000, help="Risk per trade for position sizing")
-    parser.add_argument("--detailed", action="store_true", help="Show detailed analysis for each stock")
-    
-    # === NEW: DISCOVERY MODE ===
-    parser.add_argument("--discovery", action="store_true", help="Discovery mode: scan major indices for high-scoring stocks")
-    parser.add_argument("--min-score", type=float, default=0.5, help="Minimum technical score threshold (0-1, default: 0.5)")
-    parser.add_argument("--top-n", type=int, default=20, help="Number of top stocks to show (default: 20)")
-    parser.add_argument("--indices", nargs="+", default=["sp500"], 
-                       help="Indices to scan: sp500, nasdaq, russell1000, all")
-    
-    args = parser.parse_args()
-    
-    analyzer = ComprehensiveTechnicalAnalysis()
-    
-    if args.discovery:
-        # Discovery mode: scan indices for high-scoring stocks
-        discover_high_scoring_stocks(
-            analyzer, args.indices, args.min_score, args.top_n,
-            args.benchmark, args.account_size, args.risk_per_trade, args.detailed
-        )
-    elif args.symbols:
-        if args.detailed:
-            # Detailed analysis for each stock
-            for symbol in args.symbols:
-                analysis = analyzer.comprehensive_stock_analysis(
-                    symbol, args.benchmark, args.account_size, args.risk_per_trade
-                )
-                print_comprehensive_analysis(analysis)
+    try:
+        # Parse period (e.g. '1y', '2y', '18mo')
+        m = re.match(r"(\d+)([a-zA-Z]+)", uptrend_period)
+        if not m:
+            return False
+        n, unit = int(m.group(1)), m.group(2).lower()
+        if unit.startswith("y"):  # years
+            days = n * 365
+        elif unit.startswith("m"):  # months
+            days = n * 30
         else:
-            # Quick comparison table
-            analyze_multiple_stocks(args.symbols, args.benchmark)
-    else:
-        parser.print_help()
+            return False
+
+        # Fetch data
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period=f"{days+200}d")  # +200 for SMA150 warmup
+        
+        # Use the new method
+        slope = analyzer.calculate_sma150_slope(df, days)
+        return slope is not None and slope >= min_slope_pct
+        
+    except Exception as e:
+        console.print(f"⚠️ {symbol}: Error in uptrend analysis - {str(e)}")
+        return False
 
 def discover_high_scoring_stocks(
     analyzer: ComprehensiveTechnicalAnalysis,
     indices: List[str] = ["sp500"],
-    min_score: float = 0.5,
+    min_score: float = 0.6,
     top_n: int = 20,
     benchmark: str = "SPY",
     account_size: float = 100000,
-    risk_per_trade: float = 1000,
-    detailed: bool = False
+    risk_per_trade: float = 500,
+    detailed: bool = False,
+    uptrend_period: Optional[str] = None,
+    min_slope_pct: float = 0
 ):
     """
     Discovery mode: Scan major stock indices and filter high-scoring opportunities
+    ENHANCED: Single-pass analysis with integrated uptrend check
     """
     console.print(f"\n🔍 [bold blue]MCP-STYLE STOCK DISCOVERY MODE[/bold blue]")
+    console.print(f"Strategy: {analyzer.strategy.title()}")
     console.print(f"Scanning indices: {', '.join(indices).upper()}")
     console.print(f"Filter: Technical Score ≥ {min_score*100:.0f}% | Showing Top {top_n}")
+    
+    if uptrend_period:
+        console.print(f"Additional Filter: SMA150 uptrend over {uptrend_period} (min slope: {min_slope_pct}%)")
     
     # Get stock symbols from indices
     all_symbols = []
     for index in indices:
-        symbols = get_index_symbols(index)
-        all_symbols.extend(symbols)
-        console.print(f"   📊 {index.upper()}: {len(symbols)} stocks")
+        try:
+            symbols = get_index_symbols(index)
+            all_symbols.extend(symbols)
+            console.print(f"   📊 {index.upper()}: {len(symbols)} stocks")
+        except Exception as e:
+            console.print(f"⚠️ Error fetching {index} symbols: {str(e)}")
+            continue
     
-    # Remove duplicates
+    # Remove duplicates and invalid symbols
     all_symbols = list(set(all_symbols))
+    all_symbols = [s for s in all_symbols if not any(x in s for x in ['.B', '.A', '^', '='])]
     console.print(f"\n🎯 Total unique stocks to analyze: {len(all_symbols)}")
     
-    # Analyze and filter stocks
+    # Analyze and filter stocks in a single pass
     qualifying_stocks = []
     analyzed_count = 0
+    error_count = 0
+    error_details = []  # Track specific errors for debugging
     
-    console.print(f"\n⚡ Analyzing stocks for technical score...")
+    console.print(f"\n⚡ Analyzing stocks (single-pass analysis)...")
     
     for i, symbol in enumerate(all_symbols):
         try:
             console.print(f"   [{i+1}/{len(all_symbols)}] {symbol}...", end="")
             
-            # Perform comprehensive analysis
-            analysis = analyzer.comprehensive_stock_analysis(symbol, benchmark, account_size, risk_per_trade)
+            # Perform comprehensive analysis with integrated uptrend check
+            analysis = analyzer.comprehensive_stock_analysis(
+                symbol, benchmark, account_size, risk_per_trade,
+                uptrend_period, min_slope_pct
+            )
             analyzed_count += 1
             
             if "error" in analysis:
                 console.print(" ❌")
+                error_count += 1
+                error_details.append(f"{symbol}: {analysis['error']}")
                 continue
             
-            # Apply simple technical score filter
+            # Apply technical score filter
             technical_score = analysis.get("technical_score", 0)
             
             # Check if stock meets minimum score
@@ -1040,46 +1206,69 @@ def discover_high_scoring_stocks(
                 
         except Exception as e:
             console.print(" ❌")
+            error_count += 1
+            error_details.append(f"{symbol}: {str(e)}")
             continue
     
-    # Sort by technical score (descending)
+    # Print analysis summary
+    console.print(f"\n📊 Analysis Summary:")
+    console.print(f"   Total stocks: {len(all_symbols)}")
+    console.print(f"   Successfully analyzed: {analyzed_count}")
+    console.print(f"   Stocks filtered out: {error_count}")
+    console.print(f"   Qualifying stocks: {len(qualifying_stocks)}")
+    
+    # Show screening filter results if any (but limit to first 10 to avoid spam)
+    if error_details:
+        console.print(f"\n🔍 [bold blue]Screening Filter Results[/bold blue] (showing first 10):")
+        for error in error_details[:10]:
+            console.print(f"   📊 {error}")
+        if len(error_details) > 10:
+            console.print(f"   ... and {len(error_details) - 10} more stocks filtered out")
+    
+    # Sort by technical score
     qualifying_stocks.sort(key=lambda x: x.get("technical_score", 0), reverse=True)
     
     # Display results
-    console.print(f"\n🏆 [bold green]DISCOVERY RESULTS[/bold green]")
-    console.print(f"Analyzed: {analyzed_count}/{len(all_symbols)} stocks")
-    console.print(f"Qualifying: {len(qualifying_stocks)} stocks (score ≥ {min_score*100:.0f}%)")
-    
     if qualifying_stocks:
         # Create results table
-        table = Table(title="🔥 High-Scoring Stock Opportunities (Ranked by Technical Score)", show_header=True)
+        table = Table(title=f"🔥 High-Scoring Stock Opportunities - {analyzer.strategy.title()} Strategy", show_header=True)
         table.add_column("Rank", style="white", width=6)
         table.add_column("Symbol", style="cyan", width=8)
         table.add_column("Price", style="green", width=8)
         table.add_column("Tech Score", style="yellow", width=10)
+        table.add_column("Trend", style="blue", width=10)
         table.add_column("RS 63d", style="magenta", width=8)
-        table.add_column("ADRP", style="blue", width=8)
-        table.add_column("Volume", style="white", width=8)
+        table.add_column("ADRP", style="white", width=8)
+        table.add_column("Volume", style="cyan", width=8)
         table.add_column("Top Pattern", style="red", width=15)
-        table.add_column("Trend", style="green", width=10)
+        if uptrend_period:
+            table.add_column("SMA150 Slope", style="green", width=10)
         
-        for rank, analysis in enumerate(qualifying_stocks[:top_n], 1):  # Top N
+        for rank, analysis in enumerate(qualifying_stocks[:top_n], 1):
             symbol = analysis["symbol"]
             price = f"${analysis['current_price']:.2f}"
             tech_score = f"{analysis.get('technical_score', 0)*100:.0f}%"
+            trend_strength = analysis["trend_analysis"].get("trend_strength", 0)
+            trend = f"{trend_strength}/100"
             rs_63d = f"{analysis.get('relative_strength', {}).get('RS_63d', {}).get('score', 0):.1f}"
             adrp = f"{analysis.get('volatility_adrp', 0):.1f}%"
-            volume = f"{analysis.get('volume_ratio', 1):.1f}x"
+            
+            # Use dynamic volume classification
+            volume_ratio = analysis.get('volume_ratio', 1)
+            adrp_val = analysis.get('volatility_adrp')
+            vdesc, vmark = analyzer.classify_volume_ratio(volume_ratio, adrp_val)
+            volume = f"{volume_ratio:.1f}x ({vmark} {vdesc})"
             
             # Get primary pattern
             patterns = analysis["pattern_analysis"]["patterns"]
             pattern = patterns[0]["type"] if patterns else "None"
             
-            # Get trend status
-            trend_strength = analysis["trend_analysis"].get("trend_strength", 0)
-            trend = f"{trend_strength}/100"
+            # Add SMA150 slope if available
+            row_data = [str(rank), symbol, price, tech_score, trend, rs_63d, adrp, volume, pattern]
+            if uptrend_period and "sma150_slope" in analysis:
+                row_data.append(f"{analysis['sma150_slope']:.1f}%")
             
-            table.add_row(str(rank), symbol, price, tech_score, rs_63d, adrp, volume, pattern, trend)
+            table.add_row(*row_data)
         
         console.print(table)
         
@@ -1089,7 +1278,11 @@ def discover_high_scoring_stocks(
                 print_comprehensive_analysis(analysis)
                 console.print("\n" + "="*80 + "\n")
     else:
-        console.print(f"❌ No stocks met the minimum technical score of {min_score*100:.0f}%. Try lowering --min-score.")
+        console.print(f"❌ No stocks met the minimum technical score of {min_score*100:.0f}%.")
+        console.print(f"💡 Try adjusting:")
+        console.print(f"   • Lower --min-score (try 0.4 or 0.5)")
+        console.print(f"   • Different --strategy (momentum/balanced/long_term)")
+        console.print(f"   • Different --indices (try 'nasdaq' or 'russell1000')")
 
 def get_index_symbols(index_name: str) -> List[str]:
     """
@@ -1116,6 +1309,254 @@ def get_index_symbols(index_name: str) -> List[str]:
         ]
         console.print(f"⚠️ Using fallback symbols for {index_name}")
         return fallback_symbols
+
+def main():
+    """Main entry point for the Pro Screener CLI"""
+    parser = argparse.ArgumentParser(
+        description="Pro Screener - Advanced MCP-Style Technical Analysis Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Discovery mode with uptrend filter
+  python pro_screener.py --discovery --uptrend 1y --slope 10 --indices sp500 nasdaq
+  
+  # Evaluation mode for specific symbols
+  python pro_screener.py --symbols AAPL NVDA --detailed
+  
+  # Discovery mode with custom strategy
+  python pro_screener.py --discovery --strategy momentum --min-score 0.7
+        """
+    )
+    
+    # Mode selection
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--discovery", action="store_true", help="Run in discovery mode to scan indices")
+    mode_group.add_argument("--symbols", nargs="+", help="Stock symbols to analyze (evaluation mode)")
+    
+    # Discovery mode options
+    parser.add_argument("--indices", nargs="+", default=["sp500"], 
+                       choices=["sp500", "nasdaq", "russell1000", "all"],
+                       help="Indices to scan in discovery mode (default: sp500)")
+    parser.add_argument("--min-score", type=float, default=0.6,
+                       help="Minimum technical score (0-1) for discovery mode (default: 0.6)")
+    parser.add_argument("--top-n", type=int, default=20,
+                       help="Number of top stocks to display (default: 20)")
+    
+    # Uptrend filter options (only applies in discovery mode)
+    parser.add_argument("--uptrend", type=str, metavar="PERIOD",
+                       help="Filter for SMA150 uptrend over period (e.g. '1y', '2y', '18mo')")
+    parser.add_argument("--slope", type=float, default=10.0,
+                       help="Minimum SMA150 slope percentage (default: 10.0)")
+    
+    # Analysis options
+    parser.add_argument("--strategy", type=str, default="balanced",
+                       choices=["momentum", "balanced", "long_term"],
+                       help="Analysis strategy (default: balanced)")
+    parser.add_argument("--benchmark", type=str, default="SPY",
+                       help="Benchmark for relative strength (default: SPY)")
+    parser.add_argument("--account-size", type=float, default=100000,
+                       help="Account size for position sizing (default: 100000)")
+    parser.add_argument("--risk-per-trade", type=float, default=500,
+                       help="Risk per trade in dollars (default: 500)")
+    parser.add_argument("--detailed", action="store_true",
+                       help="Show detailed analysis for top candidates")
+    
+    args = parser.parse_args()
+    
+    # Initialize analyzer with selected strategy
+    analyzer = ComprehensiveTechnicalAnalysis(strategy=args.strategy)
+    
+    try:
+        if args.discovery:
+            # Discovery mode
+            discover_high_scoring_stocks(
+                analyzer=analyzer,
+                indices=args.indices,
+                min_score=args.min_score,
+                top_n=args.top_n,
+                benchmark=args.benchmark,
+                account_size=args.account_size,
+                risk_per_trade=args.risk_per_trade,
+                detailed=args.detailed,
+                uptrend_period=args.uptrend,
+                min_slope_pct=args.slope
+            )
+        else:
+            # Evaluation mode for specific symbols
+            if not args.symbols:
+                parser.error("No symbols provided for evaluation mode")
+            
+            console.print(f"\n🔍 [bold blue]EVALUATION MODE[/bold blue]")
+            console.print(f"Strategy: {analyzer.strategy.title()}")
+            console.print(f"Symbols: {', '.join(args.symbols)}")
+            
+            for symbol in args.symbols:
+                analysis = analyzer.comprehensive_stock_analysis(
+                    symbol=symbol,
+                    benchmark=args.benchmark,
+                    account_size=args.account_size,
+                    risk_per_trade=args.risk_per_trade
+                )
+                
+                if "error" in analysis:
+                    console.print(f"\n❌ {symbol}: {analysis['error']}")
+                    continue
+                
+                print_comprehensive_analysis(analysis)
+                console.print("\n" + "="*80 + "\n")
+                
+    except KeyboardInterrupt:
+        console.print("\n⚠️ Analysis interrupted by user")
+    except Exception as e:
+        console.print(f"\n❌ Error: {str(e)}")
+        if args.detailed:
+            import traceback
+            console.print(traceback.format_exc())
+
+def print_comprehensive_analysis(analysis: Dict[str, Any]) -> None:
+    """Print detailed analysis results in a readable format"""
+    if "error" in analysis:
+        console.print(f"❌ {analysis['error']}")
+        return
+        
+    # Header
+    console.print(Panel(
+        f"[bold cyan]{analysis['symbol']}[/bold cyan] - ${analysis['current_price']:.2f}\n"
+        f"Technical Score: [bold yellow]{analysis['technical_score']*100:.1f}%[/bold yellow]\n"
+        f"Strategy: {analysis['strategy'].title()}",
+        title="Stock Analysis",
+        border_style="blue"
+    ))
+
+    # === TREND ANALYSIS ===
+    trend = analysis["trend_analysis"]
+    trend_strength = trend.get('trend_strength', 0)
+    trend_class = trend.get('trend_classification', '')
+    data_quality = trend.get('trend_data_quality', '')
+    sma_20 = trend.get('sma_20_valid', False)
+    sma_50 = trend.get('sma_50_valid', False)
+    sma_200 = trend.get('sma_200_valid', False)
+    above_20 = trend.get('above_20sma')
+    above_50 = trend.get('above_50sma')
+    above_200 = trend.get('above_200sma')
+    cross_20_50 = trend.get('20_50_bullish')
+    cross_50_200 = trend.get('50_200_bullish')
+
+    def checkmark(val):
+        return "✅" if val else "❌" if val is not None else "❓"
+
+    console.print("\n[bold blue]Trend Analysis[/bold blue]")
+    console.print(f"   Trend Strength: {trend_strength}/100  {'🟢' if trend_strength >= 70 else '🟡' if trend_strength >= 50 else '🔶' if trend_strength >= 30 else '🔴'}")
+    console.print(f"   Classification: {trend_class}")
+    console.print(f"   Data Quality: {data_quality}")
+    console.print(f"   ├── Above 20SMA: {checkmark(above_20)}   ├── Above 50SMA: {checkmark(above_50)}   ├── Above 200SMA: {checkmark(above_200)}")
+    console.print(f"   ├── 20>50 Bullish: {checkmark(cross_20_50)}   ├── 50>200 Bullish: {checkmark(cross_50_200)}")
+
+    # === RELATIVE STRENGTH ===
+    rs = analysis["relative_strength"]
+    benchmark = analysis.get("benchmark", "SPY")  # Get benchmark with SPY as default
+    console.print(f"\n[bold blue]Relative Strength vs {benchmark}[/bold blue]")
+    for period, data in rs.items():
+        if period != "error":
+            emoji = "🟢" if data['score'] > 70 else "🟡" if data['score'] > 55 else "🔶" if data['score'] > 40 else "🔴"
+            console.print(f"   {period}: {data['score']:.1f} - {data['classification']} {emoji}")
+            console.print(f"      Stock: {data['stock_return']:+.1f}% | {benchmark}: {data['benchmark_return']:+.1f}%")
+
+    # === PATTERN ANALYSIS ===
+    patterns = analysis["pattern_analysis"]["patterns"]
+    if patterns:
+        console.print("\n[bold blue]Technical Patterns[/bold blue]")
+        for pattern in patterns[:3]:  # Show top 3 patterns
+            conf = pattern.get('confidence', '')
+            conf_emoji = "✅" if conf == "High" else "🟡" if conf == "Medium" else "❌"
+            console.print(f"   • {pattern['type']} ({conf}) {conf_emoji}")
+            console.print(f"     Signal: {pattern['signal']}")
+
+    # === VOLUME ANALYSIS ===
+    console.print("\n[bold blue]Volume Analysis[/bold blue]")
+    if "volume_profile" in analysis and "point_of_control" in analysis["volume_profile"]:
+        vp = analysis["volume_profile"]
+        current_price = analysis["current_price"]
+        poc = vp["point_of_control"]
+        va_low = vp["value_area_low"]
+        va_high = vp["value_area_high"]
+        
+        # Add visual indicators for POC and Value Area
+        poc_indicator = "✅" if current_price > poc else "❌"
+        va_indicator = "✅" if va_low <= current_price <= va_high else "❌"
+        
+        console.print(f"   Point of Control: ${poc:.2f} {poc_indicator}")
+        console.print(f"   Value Area: ${va_low:.2f} - ${va_high:.2f} {va_indicator}")
+
+    volume_ratio = analysis.get("volume_ratio")
+    adrp = analysis.get("volatility_adrp")
+    def volume_desc(vr, adrp):
+        if vr is None:
+            return "(No data)", "❓"
+        if adrp is None:
+            if vr > 1.5:
+                return "High", "✅"
+            elif vr > 0.8:
+                return "Normal", "🟡"
+            else:
+                return "Low", "❌"
+        else:
+            if adrp > 5:
+                if vr > 2.0:
+                    return "High", "✅"
+                elif vr > 1.0:
+                    return "Normal", "🟡"
+                else:
+                    return "Low", "❌"
+            elif adrp < 2:
+                if vr > 1.2:
+                    return "High", "✅"
+                elif vr > 0.6:
+                    return "Normal", "🟡"
+                else:
+                    return "Low", "❌"
+            else:
+                if vr > 1.5:
+                    return "High", "✅"
+                elif vr > 0.8:
+                    return "Normal", "🟡"
+                else:
+                    return "Low", "❌"
+    vdesc, vmark = volume_desc(volume_ratio, adrp)
+    if volume_ratio is not None:
+        console.print(f"   Volume Ratio: {volume_ratio:.1f}x {vmark} ({vdesc}) vs 20d avg")
+    if adrp is not None:
+        console.print(f"   ADRP: {adrp:.1f}%")
+
+    # === RSI ===
+    rsi = analysis.get("rsi")
+    if rsi is not None:
+        rsi_desc = "(Oversold)" if rsi < 30 else "(Overbought)" if rsi > 70 else "(Neutral)"
+        rsi_emoji = "🟢" if rsi < 30 else "🔴" if rsi > 70 else "🟡"
+        console.print(f"   RSI: {rsi:.1f} {rsi_emoji} {rsi_desc}")
+
+    # === STOP LEVELS ===
+    stops = analysis["stop_analysis"]
+    if "error" not in stops:
+        console.print("\n[bold blue]Stop Levels[/bold blue]")
+        for stop_type, price in stops.items():
+            if isinstance(price, (int, float)) and price > 0:
+                risk_pct = stops.get(f"{stop_type}_risk_pct")
+                if risk_pct is not None:
+                    console.print(f"   {stop_type}: ${price:.2f} ({risk_pct:+.1f}% risk)")
+
+    # === POSITION SIZING ===
+    position = analysis["position_analysis"]
+    if "error" not in position:
+        console.print("\n[bold blue]Position Sizing[/bold blue]")
+        console.print(f"   Recommended Shares: {position['recommended_shares']}")
+        console.print(f"   Position Cost: ${position['position_cost']:,.2f}")
+        console.print(f"   Account Risk: {position['account_risk_pct']:.1f}%")
+        targets = position["risk_reward_targets"]
+        console.print("\n   Risk/Reward Targets:")
+        console.print(f"   1:1 Target: ${targets['r1_target']:.2f}")
+        console.print(f"   2:1 Target: ${targets['r2_target']:.2f}")
+        console.print(f"   3:1 Target: ${targets['r3_target']:.2f}")
 
 if __name__ == "__main__":
     main() 

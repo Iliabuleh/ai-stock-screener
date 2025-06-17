@@ -85,7 +85,7 @@ def main():
     # Initialize tracking DataFrames
     etf_df = underlying_data[['Close']].copy()
     etf_df.rename(columns={'Close': f'{underlying}_Close'}, inplace=True)
-    
+
     # Add ETF price data
     etf_df[f'Current_{etf_ticker}_Price'] = etf_data['Close'].reindex(etf_df.index, method='ffill')
     
@@ -98,7 +98,7 @@ def main():
     
     etf_df['ETF_NAV'] = (etf_df[f'{underlying}_Close'] / initial_underlying_price) * initial_etf_price_for_nav
     etf_df['ETF_NAV_PostDiv'] = etf_df['ETF_NAV'].copy()
-    
+
     # Initialize columns for tracking investments
     etf_df['Total_Shares'] = 0.0
     etf_df['Total_Investment'] = 0.0
@@ -211,16 +211,16 @@ def main():
     dividend_rows = etf_df[etf_df['Dividend_Per_Share'] > 0]
     if not dividend_rows.empty:
         print(f"\n📦 All Dividend Payment Rows:")
-        print(dividend_rows[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends', 'Portfolio_Value']])
+    print(dividend_rows[['ETF_NAV', f'Current_{etf_ticker}_Price', 'Dividend_Per_Share', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends', 'Portfolio_Value']])
+
+    print(f"\n📦 Dividend Payments Summary:")
+    print(f"Total dividend payments: {len(dividend_rows)}")
+    print(f"Total dividends per share: ${dividend_rows['Dividend_Per_Share'].sum():.3f}")
+    print(f"Average dividend per share: ${dividend_rows['Dividend_Per_Share'].mean():.3f}")
         
-        print(f"\n📦 Dividend Payments Summary:")
-        print(f"Total dividend payments: {len(dividend_rows)}")
-        print(f"Total dividends per share: ${dividend_rows['Dividend_Per_Share'].sum():.3f}")
-        print(f"Average dividend per share: ${dividend_rows['Dividend_Per_Share'].mean():.3f}")
-        
-        print(f"\n📦 Recent Dividend Payments:")
-        recent_divs = dividend_rows[['Dividend_Per_Share', 'Total_Shares', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends']].tail(5)
-        print(recent_divs)
+    print(f"\n📦 Recent Dividend Payments:")
+    recent_divs = dividend_rows[['Dividend_Per_Share', 'Total_Shares', 'Total_Dividend_Payment', 'Total_Cumulative_Dividends']].tail(5)
+    print(recent_divs)
 
     # Also show last few rows for context (like original version)
     print(f"\n📈 Last few trading days:")

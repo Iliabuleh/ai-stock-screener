@@ -75,6 +75,12 @@ def main():
     parser.add_argument("--ema-long", type=int, default=48,
                     help="Long EMA period for momentum analysis (default: 48)")
 
+    parser.add_argument(
+        "--discover_sectors",
+        action="store_true",
+        help="Discover investment opportunities in leading sectors using yfinance sector data"
+    )
+
     args = parser.parse_args()
 
     config = {
@@ -89,6 +95,7 @@ def main():
         "integrate_market": not args.no_integrate_market,
         "sector_filter": args.sector,
         "hot_stocks_count": args.hot_stocks,
+        "discover_sectors": args.discover_sectors,
         
         # === ADVANCED CONFIGURATION OVERRIDES ===
         "discovery_threshold": args.ml_probability_threshold,
@@ -141,6 +148,11 @@ def main():
     if args.hot_stocks > 0:
         run_hot_stocks_scanner(tickers, config, args.hot_stocks)
         return
+    
+    # Sector discovery mode - standalone sector analysis
+    if args.discover_sectors:
+        run_screening(tickers, config, mode="discovery", news_analysis=args.news)
+        return
         
     # Regular ML modes - require explicit mode selection
     if args.mode == "eval":
@@ -154,11 +166,12 @@ def main():
         run_screening(tickers, config, mode="discovery", news_analysis=args.news)
     else:
         from ai_stock_screener.output_formatter import console
-        console.print("❌ Please specify either --mode (discovery/eval) or --hot-stocks COUNT")
+        console.print("❌ Please specify either --mode (discovery/eval), --hot-stocks COUNT, or --discover_sectors")
         console.print("💡 Examples:")
         console.print("   python -m ai_stock_screener.cli --mode discovery")
         console.print("   python -m ai_stock_screener.cli --mode eval --tickers AAPL,NVDA")
         console.print("   python -m ai_stock_screener.cli --hot-stocks 20")
+        console.print("   python -m ai_stock_screener.cli --discover_sectors")
         console.print("   python -m ai_stock_screener.cli --mode discovery --ml-probability-threshold 0.80 --trend-weight 0.40")
         sys.exit(1)
 

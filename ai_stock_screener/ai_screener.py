@@ -10,7 +10,7 @@ import numpy as np
 import sys
 import time
 from .output_formatter import *
-from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence, calculate_dynamic_sector_multiplier
+from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence, calculate_dynamic_sector_multiplier, discover_sector_opportunities
 from .news_intelligence import get_news_intelligence, calculate_news_multiplier, NewsIntelligence, get_enhanced_news
 from typing import List, Dict
 
@@ -461,31 +461,57 @@ def get_all_tickers():
         console.print(f"❌ Error building complete index: {e}")
         return get_russell1000_tickers()
 
-def filter_tickers_by_sector(tickers, sector_name):
-    """Filter ticker list to only include stocks from specified sector"""
-    if not sector_name:
+def filter_tickers_by_sector(tickers, sector_names):
+    """Filter ticker list to only include stocks from specified sector(s)"""
+    if not sector_names:
         return tickers
     
-    console.print(f"🏭 Filtering for {sector_name} sector stocks...")
+    # Handle multiple sectors separated by commas
+    if ',' in sector_names:
+        requested_sectors = [s.strip() for s in sector_names.split(',')]
+        console.print(f"🏭 Filtering for multiple sectors: {', '.join(requested_sectors)}")
+    else:
+        requested_sectors = [sector_names.strip()]
+        console.print(f"🏭 Filtering for {sector_names} sector stocks...")
     
     filtered_tickers = []
-    sector_name_normalized = sector_name.upper().strip()
+    sector_counts = {sector: 0 for sector in requested_sectors}
     
     for ticker in tickers:
         try:
             stock_sector = get_sector_for_stock(ticker)
-            # Normalize sector names for comparison
-            if stock_sector.upper().replace(" ", "").replace("SERVICES", "") in sector_name_normalized.replace(" ", ""):
-                filtered_tickers.append(ticker)
+            
+            # Check if stock belongs to any of the requested sectors
+            for requested_sector in requested_sectors:
+                # Normalize sector names for comparison
+                requested_normalized = requested_sector.upper().strip()
+                stock_normalized = stock_sector.upper().strip()
+                
+                # Direct match or close match (handles variations)
+                if (stock_normalized == requested_normalized or 
+                    stock_normalized.replace(" ", "").replace("SERVICES", "") in requested_normalized.replace(" ", "") or
+                    requested_normalized.replace(" ", "").replace("SERVICES", "") in stock_normalized.replace(" ", "")):
+                    filtered_tickers.append(ticker)
+                    sector_counts[requested_sector] += 1
+                    break  # Don't double-count if stock matches multiple requested sectors
+                    
         except Exception as e:
             console.print(f"⚠️ Could not determine sector for {ticker}: {e}")
             continue
     
     if filtered_tickers:
-        console.print(f"✅ Found {len(filtered_tickers)} {sector_name} stocks: {', '.join(filtered_tickers[:10])}{'...' if len(filtered_tickers) > 10 else ''}")
+        total_found = len(filtered_tickers)
+        if len(requested_sectors) == 1:
+            console.print(f"✅ Found {total_found} {requested_sectors[0]} stocks: {', '.join(filtered_tickers[:10])}{'...' if total_found > 10 else ''}")
+        else:
+            console.print(f"✅ Found {total_found} stocks across {len(requested_sectors)} sectors:")
+            for sector, count in sector_counts.items():
+                if count > 0:
+                    console.print(f"   • {sector}: {count} stocks")
+            console.print(f"📊 Sample stocks: {', '.join(filtered_tickers[:10])}{'...' if total_found > 10 else ''}")
     else:
-        console.print(f"❌ No stocks found in {sector_name} sector")
-        console.print("💡 Available sectors: Technology, Healthcare, Financials, Consumer Discretionary, Communication Services, Industrials, Consumer Staples, Energy, Utilities, Real Estate, Materials")
+        console.print(f"❌ No stocks found in requested sector(s): {', '.join(requested_sectors)}")
+        console.print("💡 Available sectors: Technology, Healthcare, Financial Services, Consumer Cyclical, Communication Services, Industrials, Consumer Defensive, Energy, Utilities, Real Estate, Basic Materials")
     
     return filtered_tickers
 
@@ -822,6 +848,26 @@ def run_screening(tickers, config, mode="eval", news_analysis=False):
     # 🎯 Apply filtering before processing
     original_count = len(tickers)
     
+    # Handle sector discovery mode
+    if config.get("discover_sectors"):
+        console.print("\n🔍 SECTOR DISCOVERY MODE")
+        console.print("Discovering investment opportunities in leading sectors...")
+        
+        # Get sector intelligence first
+        sector_intel = get_sector_intelligence()
+        
+        # Discover opportunities in leading sectors
+        opportunities = discover_sector_opportunities(sector_intel)
+        
+        if opportunities:
+            console.print(f"\n🏆 SECTOR OPPORTUNITIES DISCOVERED:")
+            console.print("All sectors shown above with exact yfinance naming.")
+            console.print("Copy any sector name to use with --sector filtering.")
+        else:
+            console.print("❌ No sector data available at this time.")
+        
+        return  # Exit after discovery
+    
     # Apply sector filtering if specified
     sector_filter = config.get("sector_filter")
     if sector_filter:
@@ -852,9 +898,9 @@ def run_screening(tickers, config, mode="eval", news_analysis=False):
     
     # Print beautiful header with market context
     print_header(mode, tickers, config, market_intel, sector_intel)
-    
+
     initialize_feature_columns(tickers, config)
-    
+
     # Print model training start
     model_type = config.get("model", "random_forest")
     n_estimators = config.get("n_estimators", 100)
@@ -866,9 +912,9 @@ def run_screening(tickers, config, mode="eval", news_analysis=False):
     spy_df = fetch_data("SPY", config, is_market=True)
     spy_close_series = spy_df["Close"] if spy_df is not None else None
     if spy_df is not None and config.get("integrate_market"):
-        spy_df["Ticker"] = "SPY_MARKET"
-        spy_df["Label"] = 0  # Dummy label to keep shape
-        all_data.append(spy_df)
+            spy_df["Ticker"] = "SPY_MARKET"
+            spy_df["Label"] = 0  # Dummy label to keep shape
+            all_data.append(spy_df)
 
     # Collect stock info for company names
     stock_infos = {}

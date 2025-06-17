@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from enum import Enum
 import pandas as pd
+from rich.console import Console
+from rich.table import Table
 
 class MarketRegime(Enum):
     """Market regime classifications for model selection"""
@@ -421,127 +423,148 @@ def assess_market_stress(vix_data: dict, yield_curve_data: dict, spy_trend_data:
 
 
 def get_market_intelligence() -> MarketIntelligence:
-    """
-    Get comprehensive market intelligence for regime-aware predictions
-    This is the main function to call for market context
-    """
-    # Gather all market data
-    spy_data = get_spy_trend()
-    vix_data = get_vix_level()
-    fear_greed_data = get_fear_and_greed_level()
-    yield_curve_data = get_yield_curve_level()
-    
-    # Classify market regime
-    regime, regime_confidence, regime_description = classify_market_regime(spy_data, vix_data, fear_greed_data)
-    
-    # Assess market conditions
-    risk_appetite = assess_risk_appetite(fear_greed_data, yield_curve_data, vix_data)
-    market_stress = assess_market_stress(vix_data, yield_curve_data, spy_data)
-    
-    # Create comprehensive intelligence object
-    intelligence = MarketIntelligence(
-        # Basic indicators
-        spy_trend=spy_data.get("trend", "Unknown"),
-        vix_level=vix_data.get("level", 0.0),
-        vix_classification=vix_data.get("description", "Unknown"),
-        fear_greed_value=fear_greed_data.get("value"),
-        fear_greed_classification=fear_greed_data.get("description", "Unknown"),
-        yield_curve_spread=yield_curve_data.get("spread"),
-        yield_curve_classification=yield_curve_data.get("description", "Unknown"),
+    """Get comprehensive market intelligence analysis"""
+    try:
+        # Gather all market data
+        spy_data = get_spy_trend()
+        vix_data = get_vix_level()
+        fear_greed_data = get_fear_and_greed_level()
+        yield_curve_data = get_yield_curve_level()
         
-        # Advanced regime analysis
-        current_regime=regime,
-        regime_confidence=regime_confidence,
-        regime_description=regime_description,
+        # Classify market regime
+        regime, confidence, description = classify_market_regime(spy_data, vix_data, fear_greed_data)
         
-        # Market context
-        sma_values=spy_data.get("sma_values", {}),
-        overextension_pct=spy_data.get("overextension_pct", 0.0),
-        crossovers=spy_data.get("crossovers", []),
+        # Assess risk appetite and market stress
+        risk_appetite = assess_risk_appetite(fear_greed_data, yield_curve_data, vix_data)
+        market_stress = assess_market_stress(vix_data, yield_curve_data, spy_data)
         
-        # Risk indicators
-        risk_appetite=risk_appetite,
-        market_stress_level=market_stress
-    )
-    
-    return intelligence
+        return MarketIntelligence(
+            spy_trend=spy_data.get("trend", "Unknown"),
+            vix_level=vix_data.get("level", 20.0),
+            vix_classification=vix_data.get("classification", "unknown"),
+            fear_greed_value=fear_greed_data.get("value"),
+            fear_greed_classification=fear_greed_data.get("classification", "Unknown"),
+            yield_curve_spread=yield_curve_data.get("spread"),
+            yield_curve_classification=yield_curve_data.get("classification", "Unknown"),
+            current_regime=regime,
+            regime_confidence=confidence,
+            regime_description=description,
+            sma_values=spy_data.get("sma_values", {}),
+            overextension_pct=spy_data.get("overextension_pct", 0.0),
+            crossovers=spy_data.get("crossovers", []),
+            risk_appetite=risk_appetite,
+            market_stress_level=market_stress
+        )
+        
+    except Exception as e:
+        # Return default intelligence on error
+        return MarketIntelligence(
+            spy_trend="❌ Error retrieving market data",
+            vix_level=20.0,
+            vix_classification="unknown",
+            fear_greed_value=None,
+            fear_greed_classification="Unknown",
+            yield_curve_spread=None,
+            yield_curve_classification="Unknown",
+            current_regime=MarketRegime.SIDEWAYS_NORMAL_VOL,
+            regime_confidence=0.5,
+            regime_description=f"Unable to assess market regime: {str(e)}",
+            sma_values={},
+            overextension_pct=0.0,
+            crossovers=["Error retrieving data"],
+            risk_appetite="Unknown",
+            market_stress_level="Unknown"
+        )
 
+# Cache for sector lookups to avoid repeated API calls
+_sector_cache = {}
 
-def market_clock():
-    """Enhanced market clock with regime detection"""
-    intelligence = get_market_intelligence()
-    
-    print("\n🕒 Enhanced Market Intelligence")
-    print("=" * 50)
-    
-    # Basic Market Data
-    print("\n📊 Market Overview:")
-    print(f"📈 SPY Trend:           {intelligence.spy_trend}")
-    print(f"⚡ VIX Volatility:      {intelligence.vix_classification}")
-    print(f"😬 Fear & Greed:        {intelligence.fear_greed_classification}")
-    print(f"📉 Yield Curve:         {intelligence.yield_curve_classification}")
-    
-    # Market Regime Analysis
-    print("\n🎯 Market Regime Analysis:")
-    print(f"🏛️  Current Regime:      {intelligence.current_regime.value.replace('_', ' ').title()}")
-    print(f"🎯 Confidence:          {intelligence.regime_confidence:.1%}")
-    print(f"📝 Description:         {intelligence.regime_description}")
-    
-    # Risk Assessment
-    print("\n⚠️ Risk Assessment:")
-    print(f"🎲 Risk Appetite:       {intelligence.risk_appetite}")
-    print(f"📊 Market Stress:       {intelligence.market_stress_level}")
-    
-    # Technical Details
-    print("\n📈 Technical Analysis:")
-    print("SMA Values:", intelligence.sma_values)
-    print(f"📐 Overextension:       SPY {intelligence.overextension_pct:+.2f}% vs SMA200")
-    print("🔀 Recent Events:")
-    for crossover in intelligence.crossovers:
-        print(f"   - {crossover}")
-    
-    print("\n" + "=" * 50)
-    print(f"🧠 Regime Context: {intelligence.get_regime_context()}")
-    print()
-    
-    return intelligence
+# Enhanced sector mapping using yfinance's sector classifications
+YFINANCE_SECTORS = {
+    'technology': 'Technology',
+    'healthcare': 'Healthcare', 
+    'financial-services': 'Financial Services',
+    'consumer-cyclical': 'Consumer Cyclical',
+    'communication-services': 'Communication Services',
+    'industrials': 'Industrials',
+    'consumer-defensive': 'Consumer Defensive',
+    'energy': 'Energy',
+    'utilities': 'Utilities',
+    'real-estate': 'Real Estate',
+    'basic-materials': 'Basic Materials'
+}
+
+def get_enhanced_sector_data(sector_name: str) -> dict:
+    """Get comprehensive sector data using yfinance Sector class"""
+    try:
+        # Convert our sector names to yfinance sector keys
+        yf_sector_key = None
+        for key, value in YFINANCE_SECTORS.items():
+            if value.lower() == sector_name.lower():
+                yf_sector_key = key
+                break
+        
+        if not yf_sector_key:
+            return {}
+        
+        # Get sector data from yfinance
+        sector = yf.Sector(yf_sector_key)
+        
+        # Extract top companies with ticker symbols
+        top_companies = []
+        if hasattr(sector, 'top_companies'):
+            companies_df = sector.top_companies.head(10)
+            for symbol, row in companies_df.iterrows():
+                company_data = row.to_dict()
+                company_data['symbol'] = symbol  # Add the ticker symbol from index
+                top_companies.append(company_data)
+        
+        sector_data = {
+            'name': sector_name,
+            'yf_key': yf_sector_key,
+            'top_companies': top_companies,
+            'top_etfs': sector.top_etfs if hasattr(sector, 'top_etfs') else {},
+            'industries': sector.industries.to_dict('records') if hasattr(sector, 'industries') else [],
+            'research_available': hasattr(sector, 'research_reports')
+        }
+        
+        return sector_data
+        
+    except Exception as e:
+        print(f"⚠️ Could not fetch enhanced sector data for {sector_name}: {e}")
+        return {}
+
+def get_all_sector_companies(sector_name: str) -> list:
+    """Get all companies in a sector using yfinance functionality"""
+    try:
+        enhanced_data = get_enhanced_sector_data(sector_name)
+        if enhanced_data and 'top_companies' in enhanced_data:
+            # Return list of ticker symbols
+            return [company.get('symbol', '') for company in enhanced_data['top_companies'] if company.get('symbol')]
+        return []
+    except Exception as e:
+        print(f"⚠️ Could not fetch sector companies for {sector_name}: {e}")
+        return []
 
 def get_sector_for_stock(ticker: str) -> str:
-    """Get sector classification for a stock ticker using yfinance"""
+    """Get sector for a stock using yfinance data with caching"""
+    if ticker in _sector_cache:
+        return _sector_cache[ticker]
+    
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
         sector = info.get('sector', 'Unknown')
         
-        # Normalize sector names to match our ETF mapping
-        if sector == 'Technology':
-            return 'Technology'
-        elif sector == 'Healthcare':
-            return 'Healthcare'
-        elif sector == 'Financial Services':
-            return 'Financials'
-        elif sector == 'Consumer Cyclical':
-            return 'Consumer Discretionary'
-        elif sector == 'Communication Services':
-            return 'Communication Services'
-        elif sector == 'Industrials':
-            return 'Industrials'
-        elif sector == 'Consumer Defensive':
-            return 'Consumer Staples'
-        elif sector == 'Energy':
-            return 'Energy'
-        elif sector == 'Utilities':
-            return 'Utilities'
-        elif sector == 'Real Estate':
-            return 'Real Estate'
-        elif sector == 'Basic Materials':
-            return 'Materials'
-        else:
-            return 'Unknown'
-            
+        # Cache the result to avoid repeated API calls
+        _sector_cache[ticker] = sector
+        return sector
+        
     except Exception as e:
-        print(f"⚠️ Could not fetch sector for {ticker}: {e}")
-        return "Unknown"
+        logger.warning(f"Could not fetch sector for {ticker}: {e}")
+        # Cache unknown results too to avoid repeated failures
+        _sector_cache[ticker] = 'Unknown'
+        return 'Unknown'
 
 def calculate_dynamic_sector_multiplier(sector_name: str, sector_intel: 'SectorIntelligence') -> float:
     """Calculate dynamic sector adjustment based on actual performance"""
@@ -735,3 +758,53 @@ def get_sector_intelligence() -> SectorIntelligence:
         sector_breadth=sector_breadth,
         cross_sector_correlation=cross_sector_correlation
     )
+
+def discover_sector_opportunities(sector_intel):
+    """Discover investment opportunities across ALL sectors using yfinance data"""
+    console = Console()
+    
+    console.print(f"\n🌍 ALL SECTOR OPPORTUNITIES")
+    console.print("Choose any sector name below for --sector filtering:\n")
+    
+    opportunities = []
+    
+    # Use the actual YFINANCE_SECTORS mapping to get all available sectors
+    for yf_key, sector_name in YFINANCE_SECTORS.items():
+        try:
+            # Get enhanced sector data using the mapped sector name
+            sector_data = get_enhanced_sector_data(sector_name)
+            
+            if sector_data and sector_data.get('top_companies'):
+                # Get top 5 companies for display
+                top_companies = get_all_sector_companies(sector_name)[:5]
+                top_etfs = list(sector_data.get('top_etfs', {}).keys())[:3]
+                
+                console.print(f"📈 [bold blue]{sector_name}[/bold blue]")
+                console.print(f"  🎯 Top Stocks: {top_companies}")
+                if top_etfs:
+                    console.print(f"  🏭 ETFs: {top_etfs}")
+                console.print()
+                
+                opportunities.append({
+                    'sector': sector_name,
+                    'top_companies': top_companies,
+                    'etfs': top_etfs
+                })
+                
+        except Exception as e:
+            console.print(f"⚠️  {sector_name}: Data unavailable ({e})")
+            console.print()
+    
+    # Show which sector names correspond to yfinance's actual naming
+    console.print(f"💡 [bold green]Usage:[/bold green] Copy any sector name above and use:")
+    console.print(f"   [cyan]poetry run screener --mode discovery --sector \"Technology\"[/cyan]")
+    
+    # Show actual yfinance names for clarity
+    if len(YFINANCE_SECTORS) > 0:
+        console.print(f"   [cyan]poetry run screener --mode discovery --sector \"Financial Services\"[/cyan]")
+        console.print(f"\n📋 [bold yellow]Available yfinance sector names:[/bold yellow]")
+        for yf_key, sector_name in sorted(YFINANCE_SECTORS.items()):
+            console.print(f"   • {sector_name}")
+    console.print()
+    
+    return opportunities
