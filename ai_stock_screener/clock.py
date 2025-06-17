@@ -4,8 +4,12 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from enum import Enum
 import pandas as pd
+import logging
 from rich.console import Console
 from rich.table import Table
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 class MarketRegime(Enum):
     """Market regime classifications for model selection"""

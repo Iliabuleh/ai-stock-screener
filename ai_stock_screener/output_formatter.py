@@ -661,14 +661,3 @@ def print_hot_stocks_results(momentum_stocks, config):
     console.print(f"   • Volume Confirmation: 20% (1.5x+ = strong signal)")
     console.print(f"   • EMA Momentum: 5% (13x48 crossover)")
     console.print(f"   • RSI Filter: 5% (avoid extremes only)") 
-
-def get_effective_threshold(config, mode):
-    """
-    Get the effective threshold based on mode and configuration
-    """
-    if mode == "discovery":
-        # In discovery mode, use discovery_threshold
-        return config.get("discovery_threshold", DEFAULT_CONFIG["discovery_threshold"])
-    else:
-        # In evaluation mode, use threshold (which defaults to 0.0)
-        return config.get("threshold", DEFAULT_CONFIG["threshold"]) 

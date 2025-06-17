@@ -34,7 +34,7 @@ try:
     from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
 except ImportError:
     # Fallback for direct script execution
-    from helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
+    from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
 
 console = Console()
 
