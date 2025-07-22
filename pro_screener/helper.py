@@ -64,8 +64,8 @@ def get_russell1000_tickers():
         console.print(f"❌ Error building Russell 1000 index: {e}")
         return get_sp500_tickers()
 
-def get_nasdaq_tickers():
-    """Fetch NASDAQ-100 tickers dynamically"""
+def get_nasdaq100_tickers():
+    """Fetch NASDAQ-100 tickers dynamically (top 100 largest non-financial companies)"""
     try:
         console.print("📈 Fetching NASDAQ-100 constituent data...")
         
@@ -73,31 +73,68 @@ def get_nasdaq_tickers():
         url = "https://en.wikipedia.org/wiki/NASDAQ-100"
         tables = pd.read_html(url)
         
-        nasdaq_tickers = []
+        nasdaq100_tickers = []
         for table in tables:
             # Look for tables with ticker/symbol columns
             if 'Ticker' in table.columns:
-                nasdaq_tickers.extend(table['Ticker'].dropna().tolist())
+                nasdaq100_tickers.extend(table['Ticker'].dropna().tolist())
             elif 'Symbol' in table.columns:
-                nasdaq_tickers.extend(table['Symbol'].dropna().tolist())
+                nasdaq100_tickers.extend(table['Symbol'].dropna().tolist())
         
-        if nasdaq_tickers:
+        if nasdaq100_tickers:
             # Clean and deduplicate tickers
-            nasdaq_tickers = [ticker.strip().upper() for ticker in nasdaq_tickers if ticker and isinstance(ticker, str)]
-            nasdaq_tickers = list(set(nasdaq_tickers))  # Remove duplicates
+            nasdaq100_tickers = [ticker.strip().upper() for ticker in nasdaq100_tickers if ticker and isinstance(ticker, str)]
+            nasdaq100_tickers = list(set(nasdaq100_tickers))  # Remove duplicates
             
-            console.print(f"✅ Found {len(nasdaq_tickers)} NASDAQ-100 tickers")
-            return nasdaq_tickers
+            console.print(f"✅ Found {len(nasdaq100_tickers)} NASDAQ-100 tickers")
+            return nasdaq100_tickers
         else:
             console.print("⚠️ No NASDAQ-100 tickers found in Wikipedia tables")
             
         # Fallback: Try alternative NASDAQ source or return empty
-        console.print("📊 Falling back to S&P 500 for NASDAQ index")
+        console.print("📊 Falling back to S&P 500 for NASDAQ-100 index")
         return get_sp500_tickers()
         
     except Exception as e:
         console.print(f"❌ Error fetching NASDAQ-100: {e}")
         return get_sp500_tickers()  # Fallback to S&P 500
+
+def get_nasdaq_tickers():
+    """Fetch NASDAQ tickers using yahoo_fin library"""
+    try:
+        console.print("📈 Fetching NASDAQ tickers using yahoo_fin library...")
+        
+        # Try to import yahoo_fin
+        try:
+            from yahoo_fin import stock_info as si
+        except ImportError:
+            console.print("❌ yahoo_fin library not installed")
+            console.print("💡 Install with: pip install yahoo_fin")
+            console.print("📊 Falling back to NASDAQ-100...")
+            return get_nasdaq100_tickers()
+        
+        # Get NASDAQ stocks using yahoo_fin
+        nasdaq_stocks = si.tickers_nasdaq()
+        
+        if nasdaq_stocks and len(nasdaq_stocks) > 0:
+            # Clean the tickers
+            clean_nasdaq_stocks = []
+            for ticker in nasdaq_stocks:
+                if ticker and isinstance(ticker, str):
+                    clean_ticker = ticker.strip().upper()
+                    if clean_ticker and len(clean_ticker) <= 5:
+                        clean_nasdaq_stocks.append(clean_ticker)
+            
+            console.print(f"✅ Found {len(clean_nasdaq_stocks)} NASDAQ tickers via yahoo_fin")
+            return clean_nasdaq_stocks
+        else:
+            console.print("⚠️ No NASDAQ tickers returned from yahoo_fin")
+            return get_nasdaq100_tickers()
+            
+    except Exception as e:
+        console.print(f"❌ Error fetching NASDAQ tickers: {e}")
+        console.print("📊 Falling back to NASDAQ-100...")
+        return get_nasdaq100_tickers()
 
 def get_all_tickers():
     """Get all available tickers by combining multiple dynamic sources"""
@@ -119,28 +156,16 @@ def get_all_tickers():
         if russell_additions > 0:
             console.print(f"✅ Added {russell_additions} additional Russell 1000 stocks")
         
-        # 3. Try to get NASDAQ-100 for tech coverage
+        # 3. Get full NASDAQ Composite for comprehensive tech coverage
         try:
-            console.print("📈 Fetching NASDAQ-100 for tech coverage...")
-            nasdaq_url = "https://en.wikipedia.org/wiki/NASDAQ-100"
-            nasdaq_tables = pd.read_html(nasdaq_url)
-            
-            nasdaq_tickers = []
-            for table in nasdaq_tables:
-                if 'Ticker' in table.columns or 'Symbol' in table.columns:
-                    ticker_col = 'Ticker' if 'Ticker' in table.columns else 'Symbol'
-                    nasdaq_tickers.extend(table[ticker_col].dropna().tolist())
-                    break
-            
-            if nasdaq_tickers:
-                nasdaq_tickers = [ticker.strip().upper() for ticker in nasdaq_tickers if ticker and isinstance(ticker, str)]
-                initial_count = len(all_tickers)
-                all_tickers.update(nasdaq_tickers)
-                nasdaq_additions = len(all_tickers) - initial_count
-                console.print(f"✅ Added {nasdaq_additions} additional NASDAQ-100 stocks")
+            nasdaq_full = get_nasdaq_tickers()  # Now gets full NASDAQ, not just 100
+            initial_count = len(all_tickers)
+            all_tickers.update(nasdaq_full)
+            nasdaq_additions = len(all_tickers) - initial_count
+            console.print(f"✅ Added {nasdaq_additions} additional NASDAQ stocks")
                 
         except Exception as e:
-            console.print(f"⚠️ NASDAQ-100 fetch failed: {e}")
+            console.print(f"⚠️ Full NASDAQ fetch failed: {e}")
         
         # 4. Try to get Dow Jones for blue chips
         try:

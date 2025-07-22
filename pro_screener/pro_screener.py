@@ -31,10 +31,10 @@ import re
 
 # Import dynamic ticker functions - FIXED import for direct execution
 try:
-    from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
+    from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_nasdaq100_tickers, get_all_tickers
 except ImportError:
     # Fallback for direct script execution
-    from .helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_all_tickers
+    from helper import get_sp500_tickers, get_russell1000_tickers, get_nasdaq_tickers, get_nasdaq100_tickers, get_all_tickers
 
 console = Console()
 
@@ -1292,7 +1292,9 @@ def get_index_symbols(index_name: str) -> List[str]:
         if index_name.lower() == "sp500":
             return get_sp500_tickers()
         elif index_name.lower() == "nasdaq":
-            return get_nasdaq_tickers()
+            return get_nasdaq_tickers()  # Full NASDAQ Composite
+        elif index_name.lower() == "nasdaq100":
+            return get_nasdaq100_tickers()  # NASDAQ-100 only
         elif index_name.lower() == "russell1000":
             return get_russell1000_tickers()
         elif index_name.lower() == "all":
@@ -1335,8 +1337,8 @@ Examples:
     
     # Discovery mode options
     parser.add_argument("--indices", nargs="+", default=["sp500"], 
-                       choices=["sp500", "nasdaq", "russell1000", "all"],
-                       help="Indices to scan in discovery mode (default: sp500)")
+                       choices=["sp500", "nasdaq", "nasdaq100", "russell1000", "all"],
+                       help="Indices to scan in discovery mode. Options: sp500, nasdaq (full ~3000+ stocks), nasdaq100 (top 100), russell1000, all (default: sp500)")
     parser.add_argument("--min-score", type=float, default=0.6,
                        help="Minimum technical score (0-1) for discovery mode (default: 0.6)")
     parser.add_argument("--top-n", type=int, default=20,

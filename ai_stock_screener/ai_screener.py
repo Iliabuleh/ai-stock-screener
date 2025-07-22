@@ -1258,6 +1258,14 @@ def calculate_momentum_score(ticker, config, news_intel=None):
             rsi_score * weights["rsi"]
         )
         
+        # ===== CALCULATE 3D AND 5D PRICE MOVES =====
+        price_3d = 0.0
+        price_5d = 0.0
+        if len(data) >= 4:  # Need at least 4 days for 3-day move
+            price_3d = ((latest['Close'] / data['Close'].iloc[-4]) - 1) * 100
+        if len(data) >= 6:  # Need at least 6 days for 5-day move  
+            price_5d = ((latest['Close'] / data['Close'].iloc[-6]) - 1) * 100
+        
         # Store detailed breakdown
         momentum_details = {
             # Trend analysis (PRIMARY)
@@ -1298,6 +1306,10 @@ def calculate_momentum_score(ticker, config, news_intel=None):
             # Price positioning context
             'price_vs_150sma': latest['Close'] / latest['SMA_150'],
             'distance_from_150sma': f"{((latest['Close'] / latest['SMA_150'] - 1) * 100):+.1f}%",
+            
+            # Price move analysis
+            'price_3d': price_3d,
+            'price_5d': price_5d,
             
             # Final result
             'final_score': final_score
