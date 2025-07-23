@@ -297,6 +297,55 @@ def fetch_data(ticker, config, is_market=False, spy_close=None):
         console.print(f"⚠️ Error computing indicators for {ticker}: {e}")
         return None
 
+def safe_cuml_predict_proba(model, X_data):
+    """Safely handle cuML predict_proba with proper data type conversion and indexing."""
+    try:
+        # Convert data to float32 for cuML compatibility
+        if hasattr(model, '__module__') and 'cuml' in str(model.__module__):
+            # Convert DataFrame to numpy array if needed
+            if hasattr(X_data, 'values'):
+                X_data = X_data.values.astype(np.float32)
+            else:
+                X_data = np.array(X_data, dtype=np.float32)
+        
+        # Get predictions
+        proba = model.predict_proba(X_data)
+        
+        # Handle different return formats between cuML and sklearn
+        if hasattr(proba, 'values'):  # pandas DataFrame
+            proba_array = proba.values
+        elif hasattr(proba, 'get'):  # CuPy array
+            proba_array = proba.get()  # Convert to numpy
+        else:
+            # Ensure it's a numpy array
+            proba_array = np.array(proba)
+        
+        # Return positive class probabilities (second column)
+        if proba_array.ndim == 2 and proba_array.shape[1] >= 2:
+            return proba_array[:, 1]
+        elif proba_array.ndim == 1:
+            # If only one column returned, assume it's positive class
+            return proba_array
+        else:
+            raise ValueError(f"Unexpected prediction shape: {proba_array.shape}")
+            
+    except Exception as e:
+        console.print(f"⚠️ Error in cuML prediction: {e}")
+        console.print(f"⚠️ Prediction output type: {type(proba) if 'proba' in locals() else 'Unknown'}")
+        
+        # More robust fallback - handle DataFrame case
+        try:
+            fallback_proba = model.predict_proba(X_data)
+            if hasattr(fallback_proba, 'values'):
+                return fallback_proba.values[:, 1]
+            elif hasattr(fallback_proba, 'iloc'):
+                return fallback_proba.iloc[:, 1].values
+            else:
+                return np.array(fallback_proba)[:, 1]
+        except Exception as fallback_e:
+            console.print(f"⚠️ Fallback prediction also failed: {fallback_e}")
+            raise e
+
 def train_model(df, config):
     X = df[FEATURE_COLUMNS]
     y = df["Label"]
@@ -381,10 +430,30 @@ def train_model(df, config):
                     "min_samples_leaf": [1, 2, 4]
                 }
 
+        # Prepare data for cuML if using GPU RandomForest
+        X_train_model = X_train
+        y_train_model = y_train
+        
+        # cuML requires specific data types - convert if using cuML
+        is_cuml_model = (model_type == "random_forest" and use_gpu and gpu_manager.cuml_available 
+                        and hasattr(base_model, '__module__') and 'cuml' in str(base_model.__module__))
+        
+        if is_cuml_model:
+            console.print("🔧 Converting data types for cuML compatibility")
+            
+            # Convert target to integers (cuML requirement)
+            y_train_model = y_train.astype(np.int32)
+            
+            # Convert DataFrame to numpy array and ensure float32 (cuML requirement)
+            if hasattr(X_train, 'values'):
+                X_train_model = X_train.values.astype(np.float32)
+            else:
+                X_train_model = np.array(X_train, dtype=np.float32)
+
         if grid_search:
             cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
             search = GridSearchCV(base_model, param_grid, cv=cv, scoring="accuracy", n_jobs=-1)
-            search.fit(X_train, y_train)
+            search.fit(X_train_model, y_train_model)
             
             # Print grid search results
             print_grid_search_results(search.best_params_, search.best_score_)
@@ -397,7 +466,7 @@ def train_model(df, config):
                     override_params[param] = config[param]
 
             base_model.set_params(**override_params)
-            base_model.fit(X_train, y_train)
+            base_model.fit(X_train_model, y_train_model)
             return base_model
 
     if ensemble_runs > 1:
@@ -406,7 +475,7 @@ def train_model(df, config):
         for i in range(ensemble_runs):
             seed = 42 + i
             clf = build_model(seed)
-            prob = clf.predict_proba(X_test)[:, 1]
+            prob = safe_cuml_predict_proba(clf, X_test)
             probs.append(prob)
             models.append(clf)
 
@@ -419,7 +488,7 @@ def train_model(df, config):
         
         # Calculate performance metrics
         y_pred = clf.predict(X_test)
-        y_prob = clf.predict_proba(X_test)[:, 1]
+        y_prob = safe_cuml_predict_proba(clf, X_test)
         
         acc = accuracy_score(y_test, y_pred)
         precision = precision_score(y_test, y_pred, zero_division=0)
@@ -512,7 +581,7 @@ def run_screening(tickers, config, mode="eval", news_analysis=False):
     # Make predictions
     latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
     X_pred = latest[FEATURE_COLUMNS]
-    raw_probs = clf.predict_proba(X_pred)[:, 1]
+    raw_probs = safe_cuml_predict_proba(clf, X_pred)
     
     # 🧠 Apply market regime adjustments
     console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
