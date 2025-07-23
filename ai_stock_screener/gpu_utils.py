@@ -92,19 +92,38 @@ class GPUManager:
                 "n_jobs": -1
             }
     
-    def get_cuml_random_forest(self, **kwargs):
-        """Get cuML RandomForest if available, otherwise return None."""
+    def get_cuml_random_forest(self, n_samples=None, **kwargs):
+        """Get cuML RandomForest if available, otherwise return None.
+        
+        Args:
+            n_samples: Number of training samples to adjust n_bins accordingly
+            **kwargs: Additional parameters for the RandomForest
+        """
         if not self.cuml_available:
             return None
         
         try:
             from cuml.ensemble import RandomForestClassifier as cuRF
+            
+            # Dynamically adjust n_bins based on training data size to avoid warnings
+            # Use a conservative approach since cuML processes features individually
+            # and some features may have fewer unique values than the total sample count
+            default_n_bins = kwargs.get("n_bins", 128)
+            if n_samples is not None:
+                # Use a conservative value that's much smaller than typical sample sizes
+                # This ensures n_bins is always less than unique values per feature
+                conservative_n_bins = min(32, max(n_samples // 4, 8))
+                adjusted_n_bins = min(default_n_bins, conservative_n_bins)
+            else:
+                # Use a conservative default when n_samples is not provided
+                adjusted_n_bins = min(default_n_bins, 32)
+            
             # Set default parameters optimized for GPU, being careful with cuML-specific constraints
             gpu_params = {
                 "n_estimators": kwargs.get("n_estimators", 100),
                 "random_state": kwargs.get("random_state", 42),
                 "n_streams": 1,  # GPU streams
-                "n_bins": kwargs.get("n_bins", 128),  # Conservative default to avoid warnings
+                "n_bins": adjusted_n_bins,
             }
             
             # Handle max_depth carefully - cuML doesn't like None

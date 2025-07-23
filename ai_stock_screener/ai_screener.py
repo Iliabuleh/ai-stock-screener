@@ -341,6 +341,7 @@ def train_model(df, config):
             if use_gpu and gpu_manager.cuml_available:
                 try:
                     cuml_model = gpu_manager.get_cuml_random_forest(
+                        n_samples=len(X_train),
                         random_state=seed,
                         n_estimators=n_estimators
                     )
