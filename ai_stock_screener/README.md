@@ -38,7 +38,7 @@ poetry run screener --mode discovery
 
 ##### Evaluation Mode (your own tickers)
 ```bash
-poetry run screener --mode eval --tickers AAPL NVDA AMZN
+poetry run screener --mode eval --tickers AAPL,NVDA,AMZN
 ```
 
 ## 📊 Sample Output Examples

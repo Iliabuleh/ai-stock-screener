@@ -12,6 +12,7 @@ import time
 from .output_formatter import *
 from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence, calculate_dynamic_sector_multiplier
 from .news_intelligence import get_news_intelligence, calculate_news_multiplier, NewsIntelligence
+from .gpu_utils import get_gpu_manager, print_gpu_status
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -315,9 +316,17 @@ def train_model(df, config):
     n_estimators = config.get("n_estimators", 100)
 
     def build_model(seed):
+        gpu_manager = get_gpu_manager()
+        use_gpu = config.get("use_gpu", True)
+        
         if model_type == "xgboost":
+            # Get GPU parameters for XGBoost
+            gpu_params = gpu_manager.get_xgboost_gpu_params(use_gpu)
             base_model = XGBClassifier(
-                n_jobs=-1, random_state=seed, verbosity=0, use_label_encoder=False
+                random_state=seed, 
+                verbosity=0, 
+                use_label_encoder=False,
+                **gpu_params
             )
             param_grid = {
                 "n_estimators": [100, 300, 1000, 2000],
@@ -328,16 +337,48 @@ def train_model(df, config):
                 "min_child_weight": [1, 3],
             }
         else:
-            base_model = RandomForestClassifier(
-                n_jobs=-1, random_state=seed
-            )
-            param_grid = {
-                "n_estimators": [100, 300, 1000, 2000],
-                "max_depth": [None, 10, 20, 30],
-                "max_features": ["sqrt", "log2", None],
-                "min_samples_split": [2, 5, 10],
-                "min_samples_leaf": [1, 2, 4]
-            }
+            # Try to use cuML RandomForest if GPU is available and requested
+            if use_gpu and gpu_manager.cuml_available:
+                try:
+                    cuml_model = gpu_manager.get_cuml_random_forest(
+                        random_state=seed,
+                        n_estimators=n_estimators
+                    )
+                    if cuml_model is not None:
+                        console.print("🚀 Using cuML GPU-accelerated RandomForest")
+                        base_model = cuml_model
+                        # Simplified param grid for cuML
+                        param_grid = {
+                            "n_estimators": [100, 300, 1000, 2000],
+                            "max_depth": [None, 10, 20, 30],
+                            "max_features": ["sqrt", "log2"],
+                        }
+                    else:
+                        raise Exception("cuML model creation failed")
+                except Exception as e:
+                    console.print(f"⚠️ Falling back to CPU RandomForest: {e}")
+                    base_model = RandomForestClassifier(
+                        n_jobs=-1, random_state=seed
+                    )
+                    param_grid = {
+                        "n_estimators": [100, 300, 1000, 2000],
+                        "max_depth": [None, 10, 20, 30],
+                        "max_features": ["sqrt", "log2", None],
+                        "min_samples_split": [2, 5, 10],
+                        "min_samples_leaf": [1, 2, 4]
+                    }
+            else:
+                # Use standard scikit-learn RandomForest
+                base_model = RandomForestClassifier(
+                    n_jobs=-1, random_state=seed
+                )
+                param_grid = {
+                    "n_estimators": [100, 300, 1000, 2000],
+                    "max_depth": [None, 10, 20, 30],
+                    "max_features": ["sqrt", "log2", None],
+                    "min_samples_split": [2, 5, 10],
+                    "min_samples_leaf": [1, 2, 4]
+                }
 
         if grid_search:
             cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
@@ -396,6 +437,10 @@ def train_model(df, config):
 
 def run_screening(tickers, config, mode="eval", news_analysis=False):
     start_time = time.time()
+    
+    # 🚀 Display GPU status
+    console.print("\n🚀 Hardware Acceleration Status:")
+    print_gpu_status()
     
     # 🧠 Get market intelligence first
     console.print("\n🧠 Gathering Market Intelligence...")
