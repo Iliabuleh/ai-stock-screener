@@ -386,8 +386,11 @@ def train_model(df, config):
                 "min_child_weight": [1, 3],
             }
         else:
-            # Try to use cuML RandomForest if GPU is available and requested
-            if use_gpu and gpu_manager.cuml_available:
+            # Check if we should disable cuML due to known resource management issues
+            disable_cuml = config.get("news_analysis", False)  # Disable cuML when news analysis is enabled
+            
+            # Try to use cuML RandomForest if GPU is available and requested, and not disabled
+            if use_gpu and gpu_manager.cuml_available and not disable_cuml:
                 try:
                     cuml_model = gpu_manager.get_cuml_random_forest(
                         n_samples=len(X_train),
@@ -419,6 +422,8 @@ def train_model(df, config):
                     }
             else:
                 # Use standard scikit-learn RandomForest
+                if disable_cuml:
+                    console.print("⚠️ Using CPU RandomForest (cuML disabled due to news analysis)")
                 base_model = RandomForestClassifier(
                     n_jobs=-1, random_state=seed
                 )
@@ -472,17 +477,31 @@ def train_model(df, config):
     if ensemble_runs > 1:
         models = []
         probs = []
-        for i in range(ensemble_runs):
-            seed = 42 + i
-            clf = build_model(seed)
-            prob = safe_cuml_predict_proba(clf, X_test)
-            probs.append(prob)
-            models.append(clf)
+        gpu_manager = get_gpu_manager()
+        
+        try:
+            for i in range(ensemble_runs):
+                seed = 42 + i
+                clf = build_model(seed)
+                prob = safe_cuml_predict_proba(clf, X_test)
+                probs.append(prob)
+                models.append(clf)
 
-        avg_prob = np.mean(probs, axis=0)
-        final_preds = (avg_prob > 0.5).astype(int)
-        acc = (final_preds == y_test).mean()
-        final_model = models[0]  # return one of the models for later use
+            avg_prob = np.mean(probs, axis=0)
+            final_preds = (avg_prob > 0.5).astype(int)
+            acc = (final_preds == y_test).mean()
+            final_model = models[0]  # return one of the models for later use
+            
+            # Clean up unused ensemble models to prevent GPU memory leaks
+            for i, model in enumerate(models):
+                if i != 0:  # Keep the first model as final_model
+                    gpu_manager.cleanup_cuml_model(model)
+                    
+        except Exception as e:
+            # Clean up all models if an error occurs
+            for model in models:
+                gpu_manager.cleanup_cuml_model(model)
+            raise e
     else:
         clf = build_model(config.get("seed", 42))
         
@@ -573,94 +592,105 @@ def run_screening(tickers, config, mode="eval", news_analysis=False):
     combined = pd.concat(all_data)
     combined = combined[combined["Ticker"] != "SPY_MARKET"] if not config.get("integrate_market") else combined
 
+    # Pass news analysis flag to config for model training decisions
+    config["news_analysis"] = news_analysis
+    
     clf = train_model(combined, config)
     if clf is None:
         console.print("⚠️ Skipping prediction due to insufficient positive training data.")
         return
 
-    # Make predictions
-    latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
-    X_pred = latest[FEATURE_COLUMNS]
-    raw_probs = safe_cuml_predict_proba(clf, X_pred)
+    # Get GPU manager for cleanup
+    gpu_manager = get_gpu_manager()
     
-    # 🧠 Apply market regime adjustments
-    console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
-    
-    regime_adjusted_probs = []
-    regime_explanations = []
-    
-    for raw_prob in raw_probs:
-        adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
-        regime_adjusted_probs.append(adj_prob)
-        regime_explanations.append(explanation)
-    
-    # 🏭 Apply sector adjustments
-    console.print(f"🏭 Applying {sector_intel.rotation_trend} sector adjustments...")
-    
-    final_probs = []
-    sector_explanations = []
-    
-    for i, ticker in enumerate(latest["Ticker"].tolist()):
-        regime_prob = regime_adjusted_probs[i]
-        sector_adj_prob, sector_explanation = apply_sector_adjustment(regime_prob, ticker, sector_intel)
-        final_probs.append(sector_adj_prob)
-        sector_explanations.append(sector_explanation)
-    
-    # 📰 Apply news adjustments (only if enabled)
-    if news_analysis and news_intel:
-        console.print(f"📰 Applying news sentiment adjustments...")
+    try:
+        # Make predictions
+        latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
+        X_pred = latest[FEATURE_COLUMNS]
+        raw_probs = safe_cuml_predict_proba(clf, X_pred)
         
-        news_adjusted_probs = []
-        news_explanations = []
+        # 🧠 Apply market regime adjustments
+        console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
+        
+        regime_adjusted_probs = []
+        regime_explanations = []
+        
+        for raw_prob in raw_probs:
+            adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
+            regime_adjusted_probs.append(adj_prob)
+            regime_explanations.append(explanation)
+        
+        # 🏭 Apply sector adjustments
+        console.print(f"🏭 Applying {sector_intel.rotation_trend} sector adjustments...")
+        
+        final_probs = []
+        sector_explanations = []
         
         for i, ticker in enumerate(latest["Ticker"].tolist()):
-            sector_prob = final_probs[i]
-            news_adj_prob, news_explanation = apply_news_adjustment(sector_prob, ticker, news_intel)
-            news_adjusted_probs.append(news_adj_prob)
-            news_explanations.append(news_explanation)
+            regime_prob = regime_adjusted_probs[i]
+            sector_adj_prob, sector_explanation = apply_sector_adjustment(regime_prob, ticker, sector_intel)
+            final_probs.append(sector_adj_prob)
+            sector_explanations.append(sector_explanation)
         
-        final_conviction_scores = news_adjusted_probs
-    else:
-        # No news adjustments - use sector-adjusted scores as final
-        news_adjusted_probs = final_probs.copy()  # Same as sector-adjusted
-        news_explanations = ["News analysis disabled"] * len(final_probs)
-        final_conviction_scores = final_probs
-    
-    # Create results dataframe with detailed probability breakdown
-    results_df = create_results_dataframe(
-        latest["Ticker"].tolist(), 
-        final_conviction_scores,  # Final conviction scores
-        latest,
-        stock_infos,
-        regime_explanations=regime_explanations,
-        sector_explanations=sector_explanations,
-        news_explanations=news_explanations,
-        market_intel=market_intel,
-        sector_intel=sector_intel,
-        raw_probs=raw_probs,  # Add raw ML scores
-        regime_probs=regime_adjusted_probs,  # Add regime-adjusted scores
-        sector_probs=final_probs,  # Add sector-adjusted scores
-        news_probs=news_adjusted_probs  # Add news-adjusted scores (same as sector if disabled)
-    )
-    
-    # Filter for high probability results in discovery mode
-    if mode == "discovery":
-        results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
-        print_discovery_results(results_df, config, market_intel, sector_intel)
-    else:
-        results_df = results_df.sort_values('Growth_Prob', ascending=False)
-        print_evaluation_results(results_df, config, market_intel, sector_intel)
-    
-    # Print probability breakdown for transparency
-    print_probability_breakdown(results_df)
-    
-    # Print enhanced market context
-    print_enhanced_market_context(market_intel)
-    
-    # Print sector intelligence
-    print_sector_intelligence(sector_intel)
-    
-    # Print completion stats
-    duration = time.time() - start_time
-    num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
-    print_completion_stats(duration, num_candidates, market_intel, sector_intel, news_enabled=news_analysis)
+        # 📰 Apply news adjustments (only if enabled)
+        if news_analysis and news_intel:
+            console.print(f"📰 Applying news sentiment adjustments...")
+            
+            news_adjusted_probs = []
+            news_explanations = []
+            
+            for i, ticker in enumerate(latest["Ticker"].tolist()):
+                sector_prob = final_probs[i]
+                news_adj_prob, news_explanation = apply_news_adjustment(sector_prob, ticker, news_intel)
+                news_adjusted_probs.append(news_adj_prob)
+                news_explanations.append(news_explanation)
+            
+            final_conviction_scores = news_adjusted_probs
+        else:
+            # No news adjustments - use sector-adjusted scores as final
+            news_adjusted_probs = final_probs.copy()  # Same as sector-adjusted
+            news_explanations = ["News analysis disabled"] * len(final_probs)
+            final_conviction_scores = final_probs
+        
+        # Create results dataframe with detailed probability breakdown
+        results_df = create_results_dataframe(
+            latest["Ticker"].tolist(), 
+            final_conviction_scores,  # Final conviction scores
+            latest,
+            stock_infos,
+            regime_explanations=regime_explanations,
+            sector_explanations=sector_explanations,
+            news_explanations=news_explanations,
+            market_intel=market_intel,
+            sector_intel=sector_intel,
+            raw_probs=raw_probs,  # Add raw ML scores
+            regime_probs=regime_adjusted_probs,  # Add regime-adjusted scores
+            sector_probs=final_probs,  # Add sector-adjusted scores
+            news_probs=news_adjusted_probs  # Add news-adjusted scores (same as sector if disabled)
+        )
+        
+        # Filter for high probability results in discovery mode
+        if mode == "discovery":
+            results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
+            print_discovery_results(results_df, config, market_intel, sector_intel)
+        else:
+            results_df = results_df.sort_values('Growth_Prob', ascending=False)
+            print_evaluation_results(results_df, config, market_intel, sector_intel)
+        
+        # Print probability breakdown for transparency
+        print_probability_breakdown(results_df)
+        
+        # Print enhanced market context
+        print_enhanced_market_context(market_intel)
+        
+        # Print sector intelligence
+        print_sector_intelligence(sector_intel)
+        
+        # Print completion stats
+        duration = time.time() - start_time
+        num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
+        print_completion_stats(duration, num_candidates, market_intel, sector_intel, news_enabled=news_analysis)
+        
+    finally:
+        # Always clean up the model to prevent GPU memory leaks
+        gpu_manager.cleanup_cuml_model(clf)

@@ -146,6 +146,45 @@ class GPUManager:
         except Exception as e:
             console.print(f"⚠️ Error creating cuML RandomForest: {e}")
             return None
+    
+    def cleanup_cuml_model(self, model):
+        """Safely cleanup cuML model resources to prevent GPU memory leaks.
+        
+        Args:
+            model: cuML model to cleanup
+        """
+        if model is None:
+            return
+            
+        try:
+            # Check if this is a cuML model
+            if hasattr(model, '__module__') and 'cuml' in str(model.__module__):
+                # Force garbage collection of GPU resources
+                if hasattr(model, '_clear_model'):
+                    model._clear_model()
+                elif hasattr(model, 'clear'):
+                    model.clear()
+                
+                # Clear any internal references
+                if hasattr(model, '_model'):
+                    model._model = None
+                if hasattr(model, 'handle'):
+                    model.handle = None
+                    
+                # Force Python garbage collection
+                import gc
+                gc.collect()
+                
+                # Try to clear CUDA cache if available
+                try:
+                    import cupy as cp
+                    cp.get_default_memory_pool().free_all_blocks()
+                except:
+                    pass
+                    
+        except Exception as e:
+            # Silently handle cleanup errors to avoid masking the main application
+            pass
 
 # Global GPU manager instance
 gpu_manager = GPUManager()
