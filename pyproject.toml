@@ -6,7 +6,8 @@ authors = ["Ilia Buleh <ilia.buleh@gmail.com>"]
 readme = "README.md"
 packages = [
     { include = "ai_stock_screener", format = ["sdist", "wheel"] },
-    { include = "covered_call_analyzer", format = ["sdist", "wheel"] }
+    { include = "covered_call_analyzer", format = ["sdist", "wheel"] },
+    { include = "smart_money_screener", format = ["sdist", "wheel"] }
 ]
 
 [tool.poetry.dependencies]
