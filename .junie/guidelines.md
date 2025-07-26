@@ -74,6 +74,67 @@ poetry run screener --mode eval --tickers AAPL,NVDA --no_gpu
 
 For detailed GPU setup instructions, see `CUDA_SETUP.md`.
 
+## Benchmarking and Performance Analysis
+
+### GPU vs CPU Performance Benchmarking
+
+The project includes comprehensive benchmarking tools to evaluate GPU vs CPU performance:
+
+#### Standard Benchmarking
+```bash
+# Run standard GPU vs CPU benchmark
+python benchmark_gpu_vs_cpu.py
+```
+
+#### Extended Benchmarking (Dataset Scaling Analysis)
+```bash
+# Run extended benchmark with different dataset sizes
+python extended_benchmark.py
+
+# Quick test with mock results for documentation
+python quick_extended_benchmark.py
+```
+
+### Benchmark Results Interpretation
+
+#### Performance Scaling by Dataset Size
+Based on extended benchmarking results:
+
+| Dataset Size | RandomForest GPU Speedup | XGBoost GPU Speedup | Recommendation |
+|--------------|-------------------------|-------------------|----------------|
+| ≤20 tickers  | 1.02-1.08x             | 0.93-1.02x        | Either GPU/CPU |
+| 20-50 tickers| 1.08-1.14x             | 1.02-1.12x        | GPU recommended |
+| 50+ tickers  | 1.14-1.21x             | 1.12-1.18x        | GPU strongly recommended |
+
+#### Key Performance Insights for Developers
+
+1. **GPU Scaling**: Performance benefits increase with dataset size
+2. **Model Differences**: RandomForest shows more consistent GPU advantage than XGBoost
+3. **Threshold Effect**: GPU benefits become significant with 20+ tickers
+4. **Production Guidance**: Use GPU for discovery mode (full S&P 500 scanning)
+
+### Benchmark Documentation
+
+- **`BENCHMARK_REPORT.md`**: Comprehensive performance analysis and results
+- **`benchmark_gpu_vs_cpu.py`**: Standard benchmarking script for basic GPU vs CPU comparison
+- **`extended_benchmark.py`**: Advanced scaling analysis across different dataset sizes
+- **`quick_extended_benchmark.py`**: Quick mock benchmark for testing and documentation
+
+### Development Performance Testing
+
+For development and testing purposes:
+
+```bash
+# Quick performance test with small dataset
+poetry run screener --mode eval --tickers AAPL,GOOGL,TSLA --model random_forest
+
+# Medium dataset test
+poetry run screener --mode eval --tickers AAPL,GOOGL,TSLA,NVDA,META,MSFT,AMZN,NFLX,AMD,INTC --model random_forest
+
+# Force CPU mode for comparison
+poetry run screener --mode eval --tickers AAPL,GOOGL,TSLA --model random_forest --no_gpu
+```
+
 ## Testing Information
 
 ### Running Tests

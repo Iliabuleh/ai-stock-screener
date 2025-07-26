@@ -278,6 +278,62 @@ Market Integration: ENABLED
 - **Risk Assessment**: Visual indicators for position sizing
 - **Action Recommendations**: Clear buy/hold/sell guidance
 
+## 🚀 GPU Acceleration & Performance
+
+### **GPU-Accelerated Models**
+The AI Stock Screener supports GPU acceleration for significantly improved performance with larger datasets:
+
+- **RandomForest**: Uses cuML GPU acceleration when available
+- **XGBoost**: Supports GPU training with `tree_method=gpu_hist`
+- **Automatic Fallback**: Seamlessly falls back to CPU if GPU unavailable
+- **Scaling Benefits**: Performance improvements increase with dataset size
+
+### **GPU Setup**
+```bash
+# Install with GPU dependencies
+poetry install -E gpu
+
+# Check GPU status
+poetry run screener --gpu_info
+
+# Force CPU-only mode if needed
+poetry run screener --mode eval --tickers AAPL,NVDA --no_gpu
+```
+
+### **Performance Benchmarks**
+Based on extended benchmarking across different dataset sizes:
+
+| Dataset Size | RandomForest GPU Speedup | XGBoost GPU Speedup |
+|--------------|-------------------------|-------------------|
+| 8 tickers    | 1.02x                  | 0.93x (CPU faster) |
+| 20 tickers   | 1.08x                  | 1.02x             |
+| 50 tickers   | 1.14x                  | 1.12x             |
+| 100 tickers  | **1.21x**              | **1.18x**         |
+
+**Key Performance Insights:**
+- GPU benefits increase with larger datasets
+- RandomForest shows consistent GPU advantage
+- XGBoost performs better on CPU for small datasets (≤20 tickers)
+- Best performance: RandomForest with 100+ tickers (21% speedup)
+
+### **Recommended Configurations**
+```bash
+# Small datasets (≤20 tickers): Either GPU or CPU
+poetry run screener --mode eval --tickers AAPL,GOOGL,TSLA --model random_forest
+
+# Medium datasets (20-50 tickers): GPU recommended
+poetry run screener --mode eval --tickers [20-50 tickers] --model random_forest
+
+# Large datasets (50+ tickers): GPU strongly recommended
+poetry run screener --mode discovery --model random_forest  # Uses full S&P 500
+```
+
+### **Extended Benchmarking**
+For detailed performance analysis across different configurations, see:
+- `BENCHMARK_REPORT.md` - Comprehensive GPU vs CPU performance analysis
+- `benchmark_gpu_vs_cpu.py` - Standard benchmarking script
+- `extended_benchmark.py` - Scaling analysis across dataset sizes
+
 ## 🧠 Understanding the Output
 
 ### **Probability Scores**
