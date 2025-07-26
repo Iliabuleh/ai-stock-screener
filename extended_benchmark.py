@@ -290,7 +290,10 @@ class ExtendedBenchmarkRunner:
     def save_extended_results(self):
         """Save extended benchmark results to JSON file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"extended_benchmark_results_{timestamp}.json"
+        filename = f"generated_reports/extended_benchmark_results_{timestamp}.json"
+        
+        # Ensure the generated_reports directory exists
+        Path("generated_reports").mkdir(exist_ok=True)
         
         with open(filename, 'w') as f:
             json.dump(self.results, f, indent=2)

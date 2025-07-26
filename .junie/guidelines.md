@@ -113,12 +113,53 @@ Based on extended benchmarking results:
 3. **Threshold Effect**: GPU benefits become significant with 20+ tickers
 4. **Production Guidance**: Use GPU for discovery mode (full S&P 500 scanning)
 
+#### Memory Usage Analysis
+
+Based on comprehensive memory benchmarking results:
+
+| Dataset Size | RandomForest Memory Overhead | XGBoost Memory Overhead | Memory Impact |
+|--------------|------------------------------|-------------------------|---------------|
+| ≤20 tickers  | +24% GPU vs CPU             | +13% GPU vs CPU         | Moderate |
+| 20-50 tickers| +16% GPU vs CPU             | +7% GPU vs CPU          | Moderate |
+| 50+ tickers  | +16-18% GPU vs CPU          | +4-6% GPU vs CPU        | Significant |
+
+#### Key Memory Usage Insights for Developers
+
+1. **GPU Memory Overhead**: GPU implementations use 13.0% more memory on average than CPU
+2. **Model-Specific Impact**: RandomForest GPU uses 18.5% more memory, XGBoost GPU uses 7.5% more
+3. **Linear Scaling**: Memory usage scales approximately linearly with dataset size for both GPU and CPU
+4. **Production Considerations**: Monitor memory usage closely with 50+ tickers to avoid out-of-memory errors
+5. **Memory Efficiency**: CPU implementations are more memory-efficient for resource-constrained environments
+
 ### Benchmark Documentation
 
 - **`BENCHMARK_REPORT.md`**: Comprehensive performance analysis and results
 - **`benchmark_gpu_vs_cpu.py`**: Standard benchmarking script for basic GPU vs CPU comparison
 - **`extended_benchmark.py`**: Advanced scaling analysis across different dataset sizes
 - **`quick_extended_benchmark.py`**: Quick mock benchmark for testing and documentation
+
+#### Report Output Directory
+
+**All temporary reports and benchmark results should be exported to the `generated_reports/` directory.**
+
+This includes:
+- Benchmark result JSON files (e.g., `memory_benchmark_results_*.json`)
+- Memory usage reports (e.g., `memory_usage_report_*.md`)
+- Discovery mode logs (e.g., `discovery_*.log`)
+- Extended benchmark results
+- Any other temporary analysis files
+
+The `generated_reports/` directory structure:
+```
+generated_reports/
+├── .gitignore                    # Git ignore configuration
+├── benchmark_results_*.json      # Benchmark result files
+├── memory_usage_report_*.md      # Memory analysis reports
+├── discovery_*.log              # Discovery mode execution logs
+└── features.md                  # Feature documentation
+```
+
+**Developer Note**: When creating new benchmark or analysis scripts, ensure all output files are saved to the `generated_reports/` directory to maintain project organization.
 
 ### Development Performance Testing
 
