@@ -369,8 +369,26 @@ def train_model(df, config):
         use_gpu = config.get("use_gpu", True)
         
         if model_type == "xgboost":
-            # Get GPU parameters for XGBoost
-            gpu_params = gpu_manager.get_xgboost_gpu_params(use_gpu)
+            # Get optimized GPU parameters for XGBoost with dataset characteristics
+            dataset_size = len(X_train) if X_train is not None else None
+            feature_count = X_train.shape[1] if X_train is not None else None
+            available_memory_gb = gpu_manager.gpu_memory if gpu_manager.gpu_memory else None
+            
+            gpu_params = gpu_manager.get_xgboost_gpu_params(
+                use_gpu=use_gpu,
+                dataset_size=dataset_size,
+                feature_count=feature_count,
+                available_memory_gb=available_memory_gb
+            )
+            
+            # Log optimization details for performance monitoring
+            if use_gpu and gpu_manager.cuda_available:
+                console.print(f"🔧 XGBoost GPU Optimization:")
+                console.print(f"   • Dataset Size: {dataset_size} samples")
+                console.print(f"   • Feature Count: {feature_count} features")
+                console.print(f"   • GPU Memory: {available_memory_gb} GB")
+                console.print(f"   • Optimization Level: {'Small' if dataset_size and dataset_size <= 200 else 'Medium' if dataset_size and dataset_size <= 1000 else 'Large'}")
+            
             base_model = XGBClassifier(
                 random_state=seed, 
                 verbosity=0, 

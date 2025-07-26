@@ -78,19 +78,91 @@ class GPUManager:
         else:
             console.print("💻 Using CPU-only mode (no GPU acceleration detected)")
     
-    def get_xgboost_gpu_params(self, use_gpu: bool = True) -> Dict[str, Any]:
-        """Get XGBoost parameters for GPU acceleration."""
+    def get_xgboost_gpu_params(self, use_gpu: bool = True, dataset_size: int = None, 
+                              feature_count: int = None, available_memory_gb: float = None) -> Dict[str, Any]:
+        """Get optimized XGBoost parameters for GPU acceleration with dynamic tuning.
+        
+        Args:
+            use_gpu: Whether to use GPU acceleration
+            dataset_size: Number of training samples for optimization
+            feature_count: Number of features for memory optimization
+            available_memory_gb: Available GPU memory in GB for optimization
+            
+        Returns:
+            Dictionary of optimized XGBoost parameters
+        """
         if use_gpu and self.cuda_available:
-            return {
+            # Base GPU parameters
+            gpu_params = {
                 "tree_method": "gpu_hist",
                 "gpu_id": 0,
                 "predictor": "gpu_predictor"
             }
+            
+            # Dynamic optimization based on dataset characteristics
+            if dataset_size is not None:
+                # Optimize based on dataset size thresholds from benchmark results
+                if dataset_size <= 200:  # Small datasets (~8-20 tickers)
+                    # For small datasets, use CPU-optimized settings on GPU
+                    gpu_params.update({
+                        "max_bin": 64,  # Reduced bins for small datasets
+                        "grow_policy": "lossguide",  # More efficient for small data
+                        "max_leaves": 31,  # Conservative leaf count
+                        "subsample": 0.8,  # Reduce overfitting
+                        "colsample_bytree": 0.8
+                    })
+                elif dataset_size <= 1000:  # Medium datasets (~20-50 tickers)
+                    # Balanced settings for medium datasets
+                    gpu_params.update({
+                        "max_bin": 128,  # Standard bins
+                        "grow_policy": "depthwise",  # Standard growth
+                        "subsample": 0.9,
+                        "colsample_bytree": 0.9
+                    })
+                else:  # Large datasets (50+ tickers)
+                    # GPU-optimized settings for large datasets
+                    gpu_params.update({
+                        "max_bin": 256,  # More bins for better accuracy
+                        "grow_policy": "depthwise",
+                        "subsample": 1.0,  # Use all data
+                        "colsample_bytree": 1.0,
+                        "single_precision_histogram": True  # GPU memory optimization
+                    })
+            
+            # Memory optimization based on available GPU memory
+            if available_memory_gb is not None and available_memory_gb < 8:
+                # Conservative settings for limited GPU memory
+                gpu_params.update({
+                    "max_bin": min(gpu_params.get("max_bin", 128), 64),
+                    "single_precision_histogram": True,
+                    "max_cached_hist_node": 32768  # Reduce cache size
+                })
+            
+            # Feature-based optimization
+            if feature_count is not None and feature_count > 100:
+                # Optimize for high-dimensional data
+                gpu_params.update({
+                    "colsample_bytree": min(gpu_params.get("colsample_bytree", 1.0), 0.8),
+                    "colsample_bylevel": 0.8,
+                    "colsample_bynode": 0.8
+                })
+            
+            return gpu_params
         else:
-            return {
+            # CPU parameters with optimization
+            cpu_params = {
                 "tree_method": "hist",
                 "n_jobs": -1
             }
+            
+            # CPU-specific optimizations
+            if dataset_size is not None and dataset_size > 1000:
+                cpu_params.update({
+                    "max_bin": 255,  # CPU can handle more bins efficiently
+                    "grow_policy": "depthwise"
+                })
+            
+            return cpu_params
     
     def get_cuml_random_forest(self, n_samples=None, **kwargs):
         """Get cuML RandomForest if available, otherwise return None.
