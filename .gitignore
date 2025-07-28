@@ -80,3 +80,5 @@ dist/
 *.prof
 *.pstats
 *.dat
+/benchmark_results_*.json
+/generated_reports/

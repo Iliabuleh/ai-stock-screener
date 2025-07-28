@@ -3,6 +3,7 @@
 import argparse
 import sys
 from ai_stock_screener.ai_screener import get_sp500_tickers, run_screening
+from ai_stock_screener.gpu_utils import print_gpu_status, get_gpu_manager
 
 def main():
     parser = argparse.ArgumentParser(description="AI-Powered Stock Screener CLI")
@@ -24,8 +25,23 @@ def main():
                     help="Disable integration of SPY market data into training (default: enabled)")
     parser.add_argument("--news", action="store_true",
                     help="Enable news sentiment analysis (adds processing time)")
+    parser.add_argument("--no_gpu", action="store_true",
+                    help="Disable GPU acceleration (force CPU-only mode)")
+    parser.add_argument("--gpu_info", action="store_true",
+                    help="Display GPU information and exit")
 
     args = parser.parse_args()
+
+    # Handle GPU info request
+    if args.gpu_info:
+        print("🚀 GPU Information:")
+        print_gpu_status()
+        gpu_manager = get_gpu_manager()
+        gpu_info = gpu_manager.get_gpu_info()
+        print(f"\nDetailed GPU Info:")
+        for key, value in gpu_info.items():
+            print(f"  {key}: {value}")
+        sys.exit(0)
 
     config = {
         "period": args.period,
@@ -36,7 +52,8 @@ def main():
         "model": args.model,
         "grid_search": args.grid_search,
         "ensemble_runs": args.ensemble_runs,
-        "integrate_market": not args.no_integrate_market
+        "integrate_market": not args.no_integrate_market,
+        "use_gpu": not args.no_gpu
     }
 
     if args.mode == "eval":

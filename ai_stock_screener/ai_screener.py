@@ -12,6 +12,7 @@ import time
 from .output_formatter import *
 from .clock import get_market_intelligence, MarketIntelligence, get_sector_intelligence, get_sector_for_stock, SectorIntelligence, calculate_dynamic_sector_multiplier
 from .news_intelligence import get_news_intelligence, calculate_news_multiplier, NewsIntelligence
+from .gpu_utils import get_gpu_manager, print_gpu_status
 
 # 🔧 Centralized list of features used in training & prediction
 BASE_FEATURE_COLUMNS = [
@@ -296,6 +297,55 @@ def fetch_data(ticker, config, is_market=False, spy_close=None):
         console.print(f"⚠️ Error computing indicators for {ticker}: {e}")
         return None
 
+def safe_cuml_predict_proba(model, X_data):
+    """Safely handle cuML predict_proba with proper data type conversion and indexing."""
+    try:
+        # Convert data to float32 for cuML compatibility
+        if hasattr(model, '__module__') and 'cuml' in str(model.__module__):
+            # Convert DataFrame to numpy array if needed
+            if hasattr(X_data, 'values'):
+                X_data = X_data.values.astype(np.float32)
+            else:
+                X_data = np.array(X_data, dtype=np.float32)
+        
+        # Get predictions
+        proba = model.predict_proba(X_data)
+        
+        # Handle different return formats between cuML and sklearn
+        if hasattr(proba, 'values'):  # pandas DataFrame
+            proba_array = proba.values
+        elif hasattr(proba, 'get'):  # CuPy array
+            proba_array = proba.get()  # Convert to numpy
+        else:
+            # Ensure it's a numpy array
+            proba_array = np.array(proba)
+        
+        # Return positive class probabilities (second column)
+        if proba_array.ndim == 2 and proba_array.shape[1] >= 2:
+            return proba_array[:, 1]
+        elif proba_array.ndim == 1:
+            # If only one column returned, assume it's positive class
+            return proba_array
+        else:
+            raise ValueError(f"Unexpected prediction shape: {proba_array.shape}")
+            
+    except Exception as e:
+        console.print(f"⚠️ Error in cuML prediction: {e}")
+        console.print(f"⚠️ Prediction output type: {type(proba) if 'proba' in locals() else 'Unknown'}")
+        
+        # More robust fallback - handle DataFrame case
+        try:
+            fallback_proba = model.predict_proba(X_data)
+            if hasattr(fallback_proba, 'values'):
+                return fallback_proba.values[:, 1]
+            elif hasattr(fallback_proba, 'iloc'):
+                return fallback_proba.iloc[:, 1].values
+            else:
+                return np.array(fallback_proba)[:, 1]
+        except Exception as fallback_e:
+            console.print(f"⚠️ Fallback prediction also failed: {fallback_e}")
+            raise e
+
 def train_model(df, config):
     X = df[FEATURE_COLUMNS]
     y = df["Label"]
@@ -315,9 +365,35 @@ def train_model(df, config):
     n_estimators = config.get("n_estimators", 100)
 
     def build_model(seed):
+        gpu_manager = get_gpu_manager()
+        use_gpu = config.get("use_gpu", True)
+        
         if model_type == "xgboost":
+            # Get optimized GPU parameters for XGBoost with dataset characteristics
+            dataset_size = len(X_train) if X_train is not None else None
+            feature_count = X_train.shape[1] if X_train is not None else None
+            available_memory_gb = gpu_manager.gpu_memory if gpu_manager.gpu_memory else None
+            
+            gpu_params = gpu_manager.get_xgboost_gpu_params(
+                use_gpu=use_gpu,
+                dataset_size=dataset_size,
+                feature_count=feature_count,
+                available_memory_gb=available_memory_gb
+            )
+            
+            # Log optimization details for performance monitoring
+            if use_gpu and gpu_manager.cuda_available:
+                console.print(f"🔧 XGBoost GPU Optimization:")
+                console.print(f"   • Dataset Size: {dataset_size} samples")
+                console.print(f"   • Feature Count: {feature_count} features")
+                console.print(f"   • GPU Memory: {available_memory_gb} GB")
+                console.print(f"   • Optimization Level: {'Small' if dataset_size and dataset_size <= 200 else 'Medium' if dataset_size and dataset_size <= 1000 else 'Large'}")
+            
             base_model = XGBClassifier(
-                n_jobs=-1, random_state=seed, verbosity=0, use_label_encoder=False
+                random_state=seed, 
+                verbosity=0, 
+                use_label_encoder=False,
+                **gpu_params
             )
             param_grid = {
                 "n_estimators": [100, 300, 1000, 2000],
@@ -328,21 +404,79 @@ def train_model(df, config):
                 "min_child_weight": [1, 3],
             }
         else:
-            base_model = RandomForestClassifier(
-                n_jobs=-1, random_state=seed
-            )
-            param_grid = {
-                "n_estimators": [100, 300, 1000, 2000],
-                "max_depth": [None, 10, 20, 30],
-                "max_features": ["sqrt", "log2", None],
-                "min_samples_split": [2, 5, 10],
-                "min_samples_leaf": [1, 2, 4]
-            }
+            # Check if we should disable cuML due to known resource management issues
+            disable_cuml = config.get("news_analysis", False)  # Disable cuML when news analysis is enabled
+            
+            # Try to use cuML RandomForest if GPU is available and requested, and not disabled
+            if use_gpu and gpu_manager.cuml_available and not disable_cuml:
+                try:
+                    cuml_model = gpu_manager.get_cuml_random_forest(
+                        n_samples=len(X_train),
+                        random_state=seed,
+                        n_estimators=n_estimators
+                    )
+                    if cuml_model is not None:
+                        console.print("🚀 Using cuML GPU-accelerated RandomForest")
+                        base_model = cuml_model
+                        # Simplified param grid for cuML
+                        param_grid = {
+                            "n_estimators": [100, 300, 1000, 2000],
+                            "max_depth": [None, 10, 20, 30],
+                            "max_features": ["sqrt", "log2"],
+                        }
+                    else:
+                        raise Exception("cuML model creation failed")
+                except Exception as e:
+                    console.print(f"⚠️ Falling back to CPU RandomForest: {e}")
+                    base_model = RandomForestClassifier(
+                        n_jobs=-1, random_state=seed
+                    )
+                    param_grid = {
+                        "n_estimators": [100, 300, 1000, 2000],
+                        "max_depth": [None, 10, 20, 30],
+                        "max_features": ["sqrt", "log2", None],
+                        "min_samples_split": [2, 5, 10],
+                        "min_samples_leaf": [1, 2, 4]
+                    }
+            else:
+                # Use standard scikit-learn RandomForest
+                if disable_cuml:
+                    console.print("⚠️ Using CPU RandomForest (cuML disabled due to news analysis)")
+                base_model = RandomForestClassifier(
+                    n_jobs=-1, random_state=seed
+                )
+                param_grid = {
+                    "n_estimators": [100, 300, 1000, 2000],
+                    "max_depth": [None, 10, 20, 30],
+                    "max_features": ["sqrt", "log2", None],
+                    "min_samples_split": [2, 5, 10],
+                    "min_samples_leaf": [1, 2, 4]
+                }
+
+        # Prepare data for cuML if using GPU RandomForest
+        X_train_model = X_train
+        y_train_model = y_train
+        
+        # cuML requires specific data types - convert if using cuML
+        is_cuml_model = (model_type == "random_forest" and use_gpu and gpu_manager.cuml_available 
+                        and hasattr(base_model, '__module__') and 'cuml' in str(base_model.__module__))
+        
+        if is_cuml_model:
+            console.print("🔧 Converting data types for cuML compatibility")
+            
+            # Convert target to integers (cuML requirement)
+            y_train_model = y_train.astype(np.int32)
+            
+            # Convert DataFrame to numpy array and ensure float32 (cuML requirement)
+            if hasattr(X_train, 'values'):
+                X_train_model = X_train.values.astype(np.float32)
+            else:
+                X_train_model = np.array(X_train, dtype=np.float32)
 
         if grid_search:
             cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
             search = GridSearchCV(base_model, param_grid, cv=cv, scoring="accuracy", n_jobs=-1)
-            search.fit(X_train, y_train)
+            search.fit(X_train_model, y_train_model)
             
             # Print grid search results
             print_grid_search_results(search.best_params_, search.best_score_)
@@ -355,29 +489,43 @@ def train_model(df, config):
                     override_params[param] = config[param]
 
             base_model.set_params(**override_params)
-            base_model.fit(X_train, y_train)
+            base_model.fit(X_train_model, y_train_model)
             return base_model
 
     if ensemble_runs > 1:
         models = []
         probs = []
-        for i in range(ensemble_runs):
-            seed = 42 + i
-            clf = build_model(seed)
-            prob = clf.predict_proba(X_test)[:, 1]
-            probs.append(prob)
-            models.append(clf)
+        gpu_manager = get_gpu_manager()
+        
+        try:
+            for i in range(ensemble_runs):
+                seed = 42 + i
+                clf = build_model(seed)
+                prob = safe_cuml_predict_proba(clf, X_test)
+                probs.append(prob)
+                models.append(clf)
 
-        avg_prob = np.mean(probs, axis=0)
-        final_preds = (avg_prob > 0.5).astype(int)
-        acc = (final_preds == y_test).mean()
-        final_model = models[0]  # return one of the models for later use
+            avg_prob = np.mean(probs, axis=0)
+            final_preds = (avg_prob > 0.5).astype(int)
+            acc = (final_preds == y_test).mean()
+            final_model = models[0]  # return one of the models for later use
+            
+            # Clean up unused ensemble models to prevent GPU memory leaks
+            for i, model in enumerate(models):
+                if i != 0:  # Keep the first model as final_model
+                    gpu_manager.cleanup_cuml_model(model)
+                    
+        except Exception as e:
+            # Clean up all models if an error occurs
+            for model in models:
+                gpu_manager.cleanup_cuml_model(model)
+            raise e
     else:
         clf = build_model(config.get("seed", 42))
         
         # Calculate performance metrics
         y_pred = clf.predict(X_test)
-        y_prob = clf.predict_proba(X_test)[:, 1]
+        y_prob = safe_cuml_predict_proba(clf, X_test)
         
         acc = accuracy_score(y_test, y_pred)
         precision = precision_score(y_test, y_pred, zero_division=0)
@@ -396,6 +544,10 @@ def train_model(df, config):
 
 def run_screening(tickers, config, mode="eval", news_analysis=False):
     start_time = time.time()
+    
+    # 🚀 Display GPU status
+    console.print("\n🚀 Hardware Acceleration Status:")
+    print_gpu_status()
     
     # 🧠 Get market intelligence first
     console.print("\n🧠 Gathering Market Intelligence...")
@@ -458,94 +610,105 @@ def run_screening(tickers, config, mode="eval", news_analysis=False):
     combined = pd.concat(all_data)
     combined = combined[combined["Ticker"] != "SPY_MARKET"] if not config.get("integrate_market") else combined
 
+    # Pass news analysis flag to config for model training decisions
+    config["news_analysis"] = news_analysis
+    
     clf = train_model(combined, config)
     if clf is None:
         console.print("⚠️ Skipping prediction due to insufficient positive training data.")
         return
 
-    # Make predictions
-    latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
-    X_pred = latest[FEATURE_COLUMNS]
-    raw_probs = clf.predict_proba(X_pred)[:, 1]
+    # Get GPU manager for cleanup
+    gpu_manager = get_gpu_manager()
     
-    # 🧠 Apply market regime adjustments
-    console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
-    
-    regime_adjusted_probs = []
-    regime_explanations = []
-    
-    for raw_prob in raw_probs:
-        adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
-        regime_adjusted_probs.append(adj_prob)
-        regime_explanations.append(explanation)
-    
-    # 🏭 Apply sector adjustments
-    console.print(f"🏭 Applying {sector_intel.rotation_trend} sector adjustments...")
-    
-    final_probs = []
-    sector_explanations = []
-    
-    for i, ticker in enumerate(latest["Ticker"].tolist()):
-        regime_prob = regime_adjusted_probs[i]
-        sector_adj_prob, sector_explanation = apply_sector_adjustment(regime_prob, ticker, sector_intel)
-        final_probs.append(sector_adj_prob)
-        sector_explanations.append(sector_explanation)
-    
-    # 📰 Apply news adjustments (only if enabled)
-    if news_analysis and news_intel:
-        console.print(f"📰 Applying news sentiment adjustments...")
+    try:
+        # Make predictions
+        latest = combined[combined["Ticker"] != "SPY_MARKET"].groupby("Ticker").tail(1)
+        X_pred = latest[FEATURE_COLUMNS]
+        raw_probs = safe_cuml_predict_proba(clf, X_pred)
         
-        news_adjusted_probs = []
-        news_explanations = []
+        # 🧠 Apply market regime adjustments
+        console.print(f"\n🎯 Applying {market_intel.current_regime.value.replace('_', ' ').title()} regime adjustments...")
+        
+        regime_adjusted_probs = []
+        regime_explanations = []
+        
+        for raw_prob in raw_probs:
+            adj_prob, explanation = apply_regime_adjustment(raw_prob, market_intel)
+            regime_adjusted_probs.append(adj_prob)
+            regime_explanations.append(explanation)
+        
+        # 🏭 Apply sector adjustments
+        console.print(f"🏭 Applying {sector_intel.rotation_trend} sector adjustments...")
+        
+        final_probs = []
+        sector_explanations = []
         
         for i, ticker in enumerate(latest["Ticker"].tolist()):
-            sector_prob = final_probs[i]
-            news_adj_prob, news_explanation = apply_news_adjustment(sector_prob, ticker, news_intel)
-            news_adjusted_probs.append(news_adj_prob)
-            news_explanations.append(news_explanation)
+            regime_prob = regime_adjusted_probs[i]
+            sector_adj_prob, sector_explanation = apply_sector_adjustment(regime_prob, ticker, sector_intel)
+            final_probs.append(sector_adj_prob)
+            sector_explanations.append(sector_explanation)
         
-        final_conviction_scores = news_adjusted_probs
-    else:
-        # No news adjustments - use sector-adjusted scores as final
-        news_adjusted_probs = final_probs.copy()  # Same as sector-adjusted
-        news_explanations = ["News analysis disabled"] * len(final_probs)
-        final_conviction_scores = final_probs
-    
-    # Create results dataframe with detailed probability breakdown
-    results_df = create_results_dataframe(
-        latest["Ticker"].tolist(), 
-        final_conviction_scores,  # Final conviction scores
-        latest,
-        stock_infos,
-        regime_explanations=regime_explanations,
-        sector_explanations=sector_explanations,
-        news_explanations=news_explanations,
-        market_intel=market_intel,
-        sector_intel=sector_intel,
-        raw_probs=raw_probs,  # Add raw ML scores
-        regime_probs=regime_adjusted_probs,  # Add regime-adjusted scores
-        sector_probs=final_probs,  # Add sector-adjusted scores
-        news_probs=news_adjusted_probs  # Add news-adjusted scores (same as sector if disabled)
-    )
-    
-    # Filter for high probability results in discovery mode
-    if mode == "discovery":
-        results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
-        print_discovery_results(results_df, config, market_intel, sector_intel)
-    else:
-        results_df = results_df.sort_values('Growth_Prob', ascending=False)
-        print_evaluation_results(results_df, config, market_intel, sector_intel)
-    
-    # Print probability breakdown for transparency
-    print_probability_breakdown(results_df)
-    
-    # Print enhanced market context
-    print_enhanced_market_context(market_intel)
-    
-    # Print sector intelligence
-    print_sector_intelligence(sector_intel)
-    
-    # Print completion stats
-    duration = time.time() - start_time
-    num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
-    print_completion_stats(duration, num_candidates, market_intel, sector_intel, news_enabled=news_analysis)
+        # 📰 Apply news adjustments (only if enabled)
+        if news_analysis and news_intel:
+            console.print(f"📰 Applying news sentiment adjustments...")
+            
+            news_adjusted_probs = []
+            news_explanations = []
+            
+            for i, ticker in enumerate(latest["Ticker"].tolist()):
+                sector_prob = final_probs[i]
+                news_adj_prob, news_explanation = apply_news_adjustment(sector_prob, ticker, news_intel)
+                news_adjusted_probs.append(news_adj_prob)
+                news_explanations.append(news_explanation)
+            
+            final_conviction_scores = news_adjusted_probs
+        else:
+            # No news adjustments - use sector-adjusted scores as final
+            news_adjusted_probs = final_probs.copy()  # Same as sector-adjusted
+            news_explanations = ["News analysis disabled"] * len(final_probs)
+            final_conviction_scores = final_probs
+        
+        # Create results dataframe with detailed probability breakdown
+        results_df = create_results_dataframe(
+            latest["Ticker"].tolist(), 
+            final_conviction_scores,  # Final conviction scores
+            latest,
+            stock_infos,
+            regime_explanations=regime_explanations,
+            sector_explanations=sector_explanations,
+            news_explanations=news_explanations,
+            market_intel=market_intel,
+            sector_intel=sector_intel,
+            raw_probs=raw_probs,  # Add raw ML scores
+            regime_probs=regime_adjusted_probs,  # Add regime-adjusted scores
+            sector_probs=final_probs,  # Add sector-adjusted scores
+            news_probs=news_adjusted_probs  # Add news-adjusted scores (same as sector if disabled)
+        )
+        
+        # Filter for high probability results in discovery mode
+        if mode == "discovery":
+            results_df = results_df[results_df['Growth_Prob'] > 0.70].sort_values('Growth_Prob', ascending=False)
+            print_discovery_results(results_df, config, market_intel, sector_intel)
+        else:
+            results_df = results_df.sort_values('Growth_Prob', ascending=False)
+            print_evaluation_results(results_df, config, market_intel, sector_intel)
+        
+        # Print probability breakdown for transparency
+        print_probability_breakdown(results_df)
+        
+        # Print enhanced market context
+        print_enhanced_market_context(market_intel)
+        
+        # Print sector intelligence
+        print_sector_intelligence(sector_intel)
+        
+        # Print completion stats
+        duration = time.time() - start_time
+        num_candidates = len(results_df[results_df['Growth_Prob'] > 0.70]) if mode == "discovery" else None
+        print_completion_stats(duration, num_candidates, market_intel, sector_intel, news_enabled=news_analysis)
+        
+    finally:
+        # Always clean up the model to prevent GPU memory leaks
+        gpu_manager.cleanup_cuml_model(clf)
